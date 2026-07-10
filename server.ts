@@ -112,6 +112,10 @@ function getPool(): pg.Pool | null {
   if (!connectionString || connectionString.trim() === "" || connectionString.includes("YOUR_") || connectionString.includes("MY_")) {
     return null;
   }
+  if (connectionString.startsWith("http://") || connectionString.startsWith("https://")) {
+    console.warn("[PostgreSQL] Connection string is an HTTP(S) URL. Rejecting to prevent hanging pg connections.");
+    return null;
+  }
   if (!pool) {
     pool = new Pool({
       connectionString,
@@ -835,6 +839,12 @@ async function clearLogs(): Promise<void> {
 
 // Middleware
 app.use(express.json({ limit: "10mb" }));
+
+// Logging middleware
+app.use((req, res, next) => {
+  console.log(`[Request] ${req.method} ${req.url}`);
+  next();
+});
 
 // Helper to calculate date differences and rule checking
 function getDaysRemaining(expiryStr: string, targetStr: string): number {
@@ -1737,6 +1747,23 @@ setTimeout(runDailyScheduler, 5000);
 // Run every 24 hours
 setInterval(runDailyScheduler, 24 * 60 * 60 * 1000);
 
+// Process-level unhandled exception/rejection loggers
+process.on("unhandledRejection", (reason, promise) => {
+  console.error("[Unhandled Promise Rejection] at:", promise, "reason:", reason);
+});
+
+process.on("uncaughtException", (err) => {
+  console.error("[Uncaught Exception] occurred:", err);
+});
+
+// Global Express Error Handler Middleware (ensures JSON responses on errors)
+app.use((err: any, req: any, res: any, next: any) => {
+  console.error("[Unhandled Express Error]:", err);
+  res.status(err.status || 500).json({
+    error: err.message || "An unhandled server error occurred",
+    details: err.stack || String(err)
+  });
+});
 
 // Integrate Vite middleware for development or Static Assets for production
 async function startServer() {
