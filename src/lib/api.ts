@@ -7,23 +7,43 @@ export async function fetchReminders(): Promise<Reminder[]> {
 }
 
 export async function createReminder(reminder: Omit<Reminder, "id">): Promise<Reminder> {
-  const res = await fetch("/api/reminders", {
-    method: "POST",
-    headers: { "Content-Type": "application/json" },
-    body: JSON.stringify(reminder),
-  });
-  if (!res.ok) throw new Error("Failed to create reminder");
-  return res.json();
+  try {
+    const res = await fetch("/api/reminders", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify(reminder),
+    });
+    const data = await res.json();
+    console.log("Supabase insert response:", data);
+    if (!res.ok) {
+      console.error("Supabase insert error details:", data);
+      throw new Error(data.error || "Failed to create reminder");
+    }
+    return data;
+  } catch (err) {
+    console.error("Supabase insert exception in browser:", err);
+    throw err;
+  }
 }
 
 export async function updateReminder(id: string, reminder: Partial<Reminder>): Promise<Reminder> {
-  const res = await fetch(`/api/reminders/${id}`, {
-    method: "PUT",
-    headers: { "Content-Type": "application/json" },
-    body: JSON.stringify(reminder),
-  });
-  if (!res.ok) throw new Error("Failed to update reminder");
-  return res.json();
+  try {
+    const res = await fetch(`/api/reminders/${id}`, {
+      method: "PUT",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify(reminder),
+    });
+    const data = await res.json();
+    console.log("Supabase update response:", data);
+    if (!res.ok) {
+      console.error("Supabase update error details:", data);
+      throw new Error(data.error || "Failed to update reminder");
+    }
+    return data;
+  } catch (err) {
+    console.error("Supabase update exception in browser:", err);
+    throw err;
+  }
 }
 
 export async function deleteReminder(id: string): Promise<void> {

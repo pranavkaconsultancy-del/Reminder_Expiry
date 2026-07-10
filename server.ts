@@ -318,7 +318,7 @@ async function getReminderById(id: string): Promise<any | null> {
   }
 }
 
-async function saveReminder(reminder: any): Promise<void> {
+async function saveReminder(reminder: any, mode: 'insert' | 'update' | 'upsert' = 'insert'): Promise<void> {
   const s = getSupabaseClient();
   if (s && isSupabaseAvailable()) {
     try {
@@ -336,15 +336,25 @@ async function saveReminder(reminder: any): Promise<void> {
         renewalHistory: reminder.renewalHistory || [],
         renewalPeriodOverride: reminder.renewalPeriodOverride || null
       };
-      const { error } = await runWithTimeout(s.from('reminders').upsert(payload), 2500);
-      if (!error) {
-        return;
+
+      let query;
+      if (mode === 'insert') {
+        query = s.from('reminders').insert(payload);
+      } else if (mode === 'update') {
+        query = s.from('reminders').update(payload).eq('id', reminder.id);
+      } else {
+        query = s.from('reminders').upsert(payload);
       }
-      console.log("[Supabase Status] Saving reminder: fallback activated (Info: " + (error?.message || JSON.stringify(error)) + ")");
-      markSupabaseFailed();
+
+      const { error } = await runWithTimeout(query, 2500);
+      if (error) {
+        console.error("[Supabase Error] Saving reminder failed (mode: " + mode + "):", error);
+        throw new Error(`Supabase Error: ${error.message} (Code: ${error.code})${error.hint ? '. Hint: ' + error.hint : ''}`);
+      }
+      return;
     } catch (err) {
-      console.log("[Supabase Status] Saving reminder exception: fallback activated (Info: " + (err instanceof Error ? err.message : String(err)) + ")");
-      markSupabaseFailed();
+      console.error("[Supabase Status] Saving reminder exception:", err);
+      throw err;
     }
   }
   const p = getPool();
@@ -1290,7 +1300,7 @@ app.get("/api/reminders/:id/snooze", async (req, res) => {
   reminder.status = "Active"; // Reset status to active
   reminder.notes = (reminder.notes || "") + `\n[Snoozed by ${durationLabel} on ${new Date().toISOString().split("T")[0]}]`;
 
-  await saveReminder(reminder);
+  await saveReminder(reminder, 'update');
 
   // Return elegant confirmation page
   res.send(`
@@ -1450,7 +1460,7 @@ app.post("/api/reminders", async (req, res) => {
       ...req.body,
       id: "rem-" + Date.now() + "-" + Math.random().toString(36).substr(2, 5)
     };
-    await saveReminder(newReminder);
+    await saveReminder(newReminder, 'insert');
     res.status(201).json(newReminder);
   } catch (err: any) {
     res.status(500).json({ error: err.message || String(err) });
@@ -1464,7 +1474,7 @@ app.put("/api/reminders/:id", async (req, res) => {
     const existing = await getReminderById(id);
     if (existing) {
       const updated = { ...existing, ...req.body, id };
-      await saveReminder(updated);
+      await saveReminder(updated, 'update');
       res.json(updated);
     } else {
       res.status(404).json({ error: "Reminder not found" });
@@ -1503,7 +1513,7 @@ app.post("/api/reminders/bulk", async (req, res) => {
     }));
 
     for (const item of processedList) {
-      await saveReminder(item);
+      await saveReminder(item, 'insert');
     }
     res.status(201).json({ count: processedList.length, reminders: processedList });
   } catch (err: any) {
