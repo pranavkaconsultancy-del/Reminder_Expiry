@@ -1,0 +1,6 @@
+{
+  "name": "Reminder & Expiry Manager",
+  "description": "A full-stack tracking manager for business obligations, featuring Excel imports, custom rule triggers, and automated Resend email notifications with audit logs.",
+  "requestFramePermissions": [],
+  "majorCapabilities": ["MAJOR_CAPABILITY_SERVER_SIDE_GEMINI_API"]
+}
