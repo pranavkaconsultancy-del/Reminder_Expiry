@@ -13,6 +13,8 @@ interface ParsedRow {
   category: string;
   responsibleName: string;
   responsibleEmail: string;
+  customerName?: string;
+  customerEmail?: string;
   expiryDate: string;
   renewalDate: string;
   notes: string;
@@ -30,11 +32,11 @@ export default function ExcelUpload({ onUploadSuccess, categories }: ExcelUpload
 
   const downloadTemplate = () => {
     // Generate a beautiful template with sample rows matching the exact columns requested
-    const headers = ["Name", "Category", "Responsible Person", "Email", "Expiry Date", "Renewal Date", "Notes"];
+    const headers = ["Name", "Category", "Responsible Person", "Email", "Customer Name", "Customer Email", "Expiry Date", "Renewal Date", "Notes"];
     const samples = [
-      ["Office Property Insurance", "Insurance", "Pranav K", "pranavk.aconsultancy@gmail.com", "2026-12-31", "", "Annual policy with premium payment due Dec 1st."],
-      ["Server Room AC Service AMC", "Equipment Servicing", "Pranav K", "pranavk.aconsultancy@gmail.com", "2026-08-15", "2026-08-10", "Quarterly checks. CoolTech Solutions contact: +1-555-0199"],
-      ["Figma Enterprise License", "Software License", "Pranav K", "pranavk.aconsultancy@gmail.com", "2026-10-01", "2026-09-25", "Auto-renewal is turned off. Review seat count before renewal."]
+      ["Office Property Insurance", "Insurance", "Pranav K", "pranavk.aconsultancy@gmail.com", "ABC Corp", "customer.abc@example.com", "2026-12-31", "", "Annual policy with premium payment due Dec 1st."],
+      ["Server Room AC Service AMC", "Equipment Servicing", "Pranav K", "pranavk.aconsultancy@gmail.com", "", "", "2026-08-15", "2026-08-10", "Quarterly checks. CoolTech Solutions contact: +1-555-0199"],
+      ["Figma Enterprise License", "Software License", "Pranav K", "pranavk.aconsultancy@gmail.com", "Design Team Inc", "customer.design@example.com", "2026-10-01", "2026-09-25", "Auto-renewal is turned off. Review seat count before renewal."]
     ];
 
     const data = [headers, ...samples];
@@ -45,6 +47,8 @@ export default function ExcelUpload({ onUploadSuccess, categories }: ExcelUpload
       { wch: 18 }, // Category
       { wch: 22 }, // Responsible Person
       { wch: 25 }, // Email
+      { wch: 22 }, // Customer Name
+      { wch: 25 }, // Customer Email
       { wch: 15 }, // Expiry Date
       { wch: 15 }, // Renewal Date
       { wch: 45 }  // Notes
@@ -100,11 +104,13 @@ export default function ExcelUpload({ onUploadSuccess, categories }: ExcelUpload
         }
 
         const formattedRows: ParsedRow[] = rawJson.map((row: any, index) => {
-          // Parse exact columns: Name, Category, Responsible Person, Email, Expiry Date, Renewal Date, Notes
+          // Parse exact columns: Name, Category, Responsible Person, Email, Customer Name, Customer Email, Expiry Date, Renewal Date, Notes
           let name = (row["Name"] || row["Name "] || row["name"] || row["Item Name"] || "").toString().trim();
           let category = (row["Category"] || row["category"] || "").toString().trim();
           let person = (row["Responsible Person"] || row["Responsible person"] || row["person"] || "").toString().trim();
           let email = (row["Email"] || row["email"] || "").toString().trim();
+          let customerName = (row["Customer Name"] || row["Customer name"] || row["customerName"] || "").toString().trim();
+          let customerEmail = (row["Customer Email"] || row["Customer email"] || row["customerEmail"] || "").toString().trim();
           let expiry = formatDateValue(row["Expiry Date"] || row["Expiry date"] || row["expiry"] || row["expiryDate"]);
           let renewal = formatDateValue(row["Renewal Date"] || row["Renewal date"] || row["renewal"] || row["renewalDate"]);
           let notes = (row["Notes"] || row["notes"] || row["Notes "] || "").toString().trim();
@@ -129,6 +135,8 @@ export default function ExcelUpload({ onUploadSuccess, categories }: ExcelUpload
             category,
             responsibleName: person,
             responsibleEmail: email,
+            customerName: customerName || undefined,
+            customerEmail: customerEmail || undefined,
             expiryDate: expiry,
             renewalDate: renewal,
             notes,
@@ -208,7 +216,9 @@ export default function ExcelUpload({ onUploadSuccess, categories }: ExcelUpload
         expiryDate: row.expiryDate,
         renewalDate: row.renewalDate,
         status,
-        notes: row.notes
+        notes: row.notes,
+        customerName: row.customerName || null,
+        customerEmail: row.customerEmail || null
       };
     });
 
@@ -353,6 +363,7 @@ export default function ExcelUpload({ onUploadSuccess, categories }: ExcelUpload
                     <th className="py-3 px-4">Name</th>
                     <th className="py-3 px-4">Category</th>
                     <th className="py-3 px-4">Responsible Person</th>
+                    <th className="py-3 px-4">Customer</th>
                     <th className="py-3 px-4">Expiry Date</th>
                     <th className="py-3 px-4">Renewal Date</th>
                     <th className="py-3 px-4">Notes</th>
@@ -389,6 +400,16 @@ export default function ExcelUpload({ onUploadSuccess, categories }: ExcelUpload
                       <td className="py-3 px-4">
                         <div className="font-semibold">{row.responsibleName}</div>
                         <div className="text-[10px] text-gray-400">{row.responsibleEmail}</div>
+                      </td>
+                      <td className="py-3 px-4">
+                        {row.customerEmail ? (
+                          <>
+                            <div className="font-semibold text-blue-700">{row.customerName || "-"}</div>
+                            <div className="text-[10px] text-blue-500">{row.customerEmail}</div>
+                          </>
+                        ) : (
+                          <span className="text-gray-400 font-normal italic">-</span>
+                        )}
                       </td>
                       <td className="py-3 px-4 font-mono font-bold">
                         {row.expiryDate || <span className="text-red-400 italic font-normal">[Missing Expiry]</span>}

@@ -33,6 +33,8 @@ export default function ReminderForm({
   const [status, setStatus] = useState<"Active" | "Renewed" | "Expired">("Active");
   const [notes, setNotes] = useState("");
   const [renewalPeriodOverride, setRenewalPeriodOverride] = useState("");
+  const [customerName, setCustomerName] = useState("");
+  const [customerEmail, setCustomerEmail] = useState("");
   
   // Rules configuration
   const [useGlobalRules, setUseGlobalRules] = useState(true);
@@ -59,6 +61,8 @@ export default function ReminderForm({
       setStatus(reminder.status || "Active");
       setNotes(reminder.notes || "");
       setRenewalPeriodOverride(reminder.renewalPeriodOverride || "");
+      setCustomerName(reminder.customerName || "");
+      setCustomerEmail(reminder.customerEmail || "");
       if (reminder.rulesOverride) {
         setUseGlobalRules(false);
         setRulesOverride(reminder.rulesOverride);
@@ -75,6 +79,8 @@ export default function ReminderForm({
       setStatus("Active");
       setNotes("");
       setRenewalPeriodOverride("");
+      setCustomerName("");
+      setCustomerEmail("");
       setUseGlobalRules(true);
     }
     setError(null);
@@ -152,6 +158,11 @@ export default function ReminderForm({
       return;
     }
 
+    if (customerEmail.trim() && !/\S+@\S+\.\S+/.test(customerEmail)) {
+      setError("Please enter a valid customer email address.");
+      return;
+    }
+
     setIsSubmitting(true);
 
     const formData: Omit<Reminder, "id"> = {
@@ -164,7 +175,9 @@ export default function ReminderForm({
       status,
       notes: notes.trim(),
       rulesOverride: useGlobalRules ? undefined : rulesOverride,
-      renewalPeriodOverride: renewalPeriodOverride.trim() || undefined
+      renewalPeriodOverride: renewalPeriodOverride.trim() || undefined,
+      customerName: customerName.trim() || undefined,
+      customerEmail: customerEmail.trim() || undefined
     };
 
     try {
@@ -319,6 +332,45 @@ export default function ReminderForm({
               onChange={(e) => setResponsibleEmail(e.target.value)}
               className="w-full px-3 py-2 border border-gray-200 rounded-lg focus:outline-none focus:ring-1 focus:ring-blue-500 focus:border-blue-500 text-sm placeholder:text-gray-400"
             />
+          </div>
+        </div>
+
+        {/* Customer Information (Optional) */}
+        <div className="bg-blue-50/20 p-4 rounded-xl border border-blue-100/50 space-y-3">
+          <div className="flex flex-col">
+            <span className="block text-xs font-bold text-blue-900 uppercase tracking-wider">
+              Also notify a customer? (optional)
+            </span>
+            <span className="text-[11px] text-gray-500 mt-0.5">
+              Add their email if this reminder should also go to a customer, not just the responsible person.
+            </span>
+          </div>
+          <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+            <div>
+              <label className="block text-xs font-semibold uppercase tracking-wider text-gray-500 mb-1.5">
+                Customer Name (Optional)
+              </label>
+              <input
+                type="text"
+                placeholder="e.g. Acme Corp / John Doe"
+                value={customerName}
+                onChange={(e) => setCustomerName(e.target.value)}
+                className="w-full px-3 py-2 bg-white border border-gray-200 rounded-lg focus:outline-none focus:ring-1 focus:ring-blue-500 focus:border-blue-500 text-sm placeholder:text-gray-400"
+              />
+            </div>
+
+            <div>
+              <label className="block text-xs font-semibold uppercase tracking-wider text-gray-500 mb-1.5">
+                Customer Email (Optional)
+              </label>
+              <input
+                type="email"
+                placeholder="e.g. customer@example.com"
+                value={customerEmail}
+                onChange={(e) => setCustomerEmail(e.target.value)}
+                className="w-full px-3 py-2 bg-white border border-gray-200 rounded-lg focus:outline-none focus:ring-1 focus:ring-blue-500 focus:border-blue-500 text-sm placeholder:text-gray-400"
+              />
+            </div>
           </div>
         </div>
 

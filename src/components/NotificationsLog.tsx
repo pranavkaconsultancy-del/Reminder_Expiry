@@ -281,8 +281,15 @@ export default function NotificationsLog({ onRefreshReminders }: NotificationsLo
                     </td>
                     <td className="py-3 px-4 font-semibold text-gray-900">{log.reminderName}</td>
                     <td className="py-3 px-4">
-                      <div className="font-medium text-gray-800">{log.recipientName}</div>
-                      <div className="text-[10px] text-gray-400">{log.recipientEmail}</div>
+                      <div className="font-medium text-gray-800 flex items-center gap-1.5">
+                        {log.recipientName}
+                        {log.recipientType === 'customer' ? (
+                          <span className="inline-block text-[9px] font-extrabold uppercase bg-indigo-50 text-indigo-700 border border-indigo-100 rounded-sm px-1 py-0.25 tracking-wide">Customer</span>
+                        ) : (
+                          <span className="inline-block text-[9px] font-extrabold uppercase bg-slate-50 text-slate-600 border border-slate-100 rounded-sm px-1 py-0.25 tracking-wide">Responsible</span>
+                        )}
+                      </div>
+                      <div className="text-[10px] text-gray-400 font-mono mt-0.5">{log.recipientEmail}</div>
                     </td>
                     <td className="py-3 px-4 font-medium text-gray-700">
                       <span className="bg-gray-100 px-1.5 py-0.5 rounded-sm">
@@ -341,7 +348,18 @@ export default function NotificationsLog({ onRefreshReminders }: NotificationsLo
             {/* Simulated Envelope Details */}
             <div className="bg-gray-50 border-b border-gray-100 px-6 py-3 text-xs text-gray-500 grid grid-cols-1 gap-1">
               <div><strong>Sender:</strong> Expiry Manager &lt;onboarding@resend.dev&gt;</div>
-              <div><strong>Recipient:</strong> {selectedLog.recipientName} &lt;{selectedLog.recipientEmail}&gt;</div>
+              <div>
+                <strong>Recipient:</strong> {selectedLog.recipientName} &lt;{selectedLog.recipientEmail}&gt;
+                {selectedLog.recipientType && (
+                  <span className={`inline-block text-[9px] font-bold uppercase ml-2 px-1.5 py-0.5 rounded-sm ${
+                    selectedLog.recipientType === 'customer' 
+                      ? 'bg-indigo-50 text-indigo-700 border border-indigo-100/50' 
+                      : 'bg-gray-100 text-gray-600 border border-gray-200/50'
+                  }`}>
+                    {selectedLog.recipientType}
+                  </span>
+                )}
+              </div>
               <div><strong>Sent At:</strong> {new Date(selectedLog.sentAt).toUTCString()}</div>
               {selectedLog.errorDetail && (
                 <div className="text-red-600 mt-1.5 p-2 bg-red-50 border border-red-100 rounded-md font-mono text-[10px] whitespace-pre-wrap max-h-16 overflow-y-auto">

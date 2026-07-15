@@ -20,6 +20,10 @@ export interface Reminder {
   rulesOverride?: ReminderRuleInterval[]; // if undefined, use global rules
   renewalHistory?: RenewalHistoryEntry[]; // logs of renewals
   renewalPeriodOverride?: string; // override standard category renewal duration
+  acknowledged?: boolean;
+  acknowledged_at?: string;
+  customerName?: string;
+  customerEmail?: string;
 }
 
 export interface GlobalConfig {
@@ -41,6 +45,7 @@ export interface NotificationLog {
   errorDetail?: string;
   emailSubject: string;
   emailBody: string;
+  recipientType?: 'responsible' | 'customer';
 }
 
 export const RULE_LABELS: Record<ReminderRuleInterval, string> = {

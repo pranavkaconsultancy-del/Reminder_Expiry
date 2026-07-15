@@ -753,26 +753,41 @@ export default function Dashboard({
                         <td className="py-3.5 px-4">
                           <div className="font-semibold text-gray-800 text-xs">{r.responsibleName}</div>
                           <div className="text-[10px] text-gray-400 font-medium flex items-center gap-1 mt-0.5">
-                            <Mail className="w-3 h-3 shrink-0" />
+                            <Mail className="w-3 h-3 shrink-0 text-blue-500" />
                             <span className="truncate max-w-[150px]">{r.responsibleEmail}</span>
                           </div>
+                          {r.customerEmail && (
+                            <div className="mt-1 flex items-center gap-1 bg-indigo-50 border border-indigo-100/50 rounded-md px-1.5 py-0.5 w-fit" title={`Customer Email configured: ${r.customerName || 'Customer'} (${r.customerEmail})`}>
+                              <span className="inline-block w-1.5 h-1.5 bg-indigo-500 rounded-full animate-pulse"></span>
+                              <span className="text-[9px] font-bold text-indigo-700 uppercase tracking-wider">Also Notifies Customer</span>
+                            </div>
+                          )}
                         </td>
 
                         {/* Criticality Badge */}
                         <td className="py-3.5 px-4">
-                          {isOverdue ? (
-                            <span className="inline-flex items-center gap-1 text-[10px] font-bold text-red-700 bg-red-50 border border-red-100 px-2 py-0.5 rounded-full">
-                              <AlertTriangle className="w-3 h-3" /> Expired
-                            </span>
-                          ) : isSoon ? (
-                            <span className="inline-flex items-center gap-1 text-[10px] font-bold text-amber-700 bg-amber-50 border border-amber-100 px-2 py-0.5 rounded-full">
-                              <Clock className="w-3 h-3" /> Due Soon
-                            </span>
-                          ) : (
-                            <span className="inline-flex items-center gap-1 text-[10px] font-semibold text-green-700 bg-green-50 border border-green-100 px-2 py-0.5 rounded-full">
-                              <CheckCircle className="w-3 h-3" /> Active
-                            </span>
-                          )}
+                          <div className="flex flex-wrap items-center gap-1.5">
+                            {isOverdue ? (
+                              <>
+                                <span className="inline-flex items-center gap-1 text-[10px] font-bold text-red-700 bg-red-50 border border-red-100 px-2 py-0.5 rounded-full">
+                                  <AlertTriangle className="w-3 h-3" /> Expired
+                                </span>
+                                {(r.acknowledged === true || r.acknowledged === 'true') && (
+                                  <span className="inline-flex items-center gap-1 text-[10px] font-bold text-blue-700 bg-blue-50 border border-blue-100 px-2 py-0.5 rounded-full" title={`Acknowledged on ${r.acknowledged_at || 'unknown date'}`}>
+                                    <CheckCircle className="w-3 h-3 text-blue-500" /> Acknowledged
+                                  </span>
+                                )}
+                              </>
+                            ) : isSoon ? (
+                              <span className="inline-flex items-center gap-1 text-[10px] font-bold text-amber-700 bg-amber-50 border border-amber-100 px-2 py-0.5 rounded-full">
+                                <Clock className="w-3 h-3" /> Due Soon
+                              </span>
+                            ) : (
+                              <span className="inline-flex items-center gap-1 text-[10px] font-semibold text-green-700 bg-green-50 border border-green-100 px-2 py-0.5 rounded-full">
+                                <CheckCircle className="w-3 h-3" /> Active
+                              </span>
+                            )}
+                          </div>
                         </td>
 
                         {/* Actions Buttons with prominent Renew */}
@@ -852,6 +867,22 @@ export default function Dashboard({
                                     )}
                                   </div>
                                 </div>
+
+                                {r.customerEmail && (
+                                  <div>
+                                    <span className="block text-[10px] font-bold text-gray-400 uppercase tracking-wider mb-1.5">Also Notifies Customer</span>
+                                    <div className="bg-indigo-50 p-3.5 rounded-lg border border-indigo-100/50 flex flex-col gap-1.5 text-xs">
+                                      <div className="flex items-center gap-1.5 text-indigo-950">
+                                        <span className="text-gray-400 font-semibold uppercase tracking-wide text-[10px] w-12">Name:</span>
+                                        <span className="font-bold text-indigo-900">{r.customerName || <span className="text-gray-400 italic font-normal">Not Provided</span>}</span>
+                                      </div>
+                                      <div className="flex items-center gap-1.5 text-indigo-950">
+                                        <span className="text-gray-400 font-semibold uppercase tracking-wide text-[10px] w-12">Email:</span>
+                                        <span className="font-mono font-bold text-indigo-900">{r.customerEmail}</span>
+                                      </div>
+                                    </div>
+                                  </div>
+                                )}
                               </div>
 
                               {/* Right Column: Historical renewals log */}

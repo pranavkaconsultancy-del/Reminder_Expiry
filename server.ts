@@ -206,8 +206,26 @@ async function ensureTables() {
             "notes" text DEFAULT '',
             "rulesOverride" jsonb,
             "renewalHistory" jsonb DEFAULT '[]'::jsonb,
-            "renewalPeriodOverride" text
+            "renewalPeriodOverride" text,
+            "acknowledged" boolean DEFAULT false,
+            "acknowledged_at" text DEFAULT null,
+            "customerName" text DEFAULT null,
+            "customerEmail" text DEFAULT null
           );
+        `);
+
+        // Ensure columns exist on existing reminders tables
+        await client.query(`
+          ALTER TABLE reminders ADD COLUMN IF NOT EXISTS "acknowledged" boolean DEFAULT false;
+        `);
+        await client.query(`
+          ALTER TABLE reminders ADD COLUMN IF NOT EXISTS "acknowledged_at" text DEFAULT null;
+        `);
+        await client.query(`
+          ALTER TABLE reminders ADD COLUMN IF NOT EXISTS "customerName" text DEFAULT null;
+        `);
+        await client.query(`
+          ALTER TABLE reminders ADD COLUMN IF NOT EXISTS "customerEmail" text DEFAULT null;
         `);
 
         // 3. Create LOGS table
@@ -224,8 +242,14 @@ async function ensureTables() {
             "status" text NOT NULL,
             "errorDetail" text,
             "emailSubject" text NOT NULL,
-            "emailBody" text NOT NULL
+            "emailBody" text NOT NULL,
+            "recipientType" text DEFAULT null
           );
+        `);
+
+        // Ensure columns exist on existing logs tables
+        await client.query(`
+          ALTER TABLE logs ADD COLUMN IF NOT EXISTS "recipientType" text DEFAULT null;
         `);
 
         // 4. Seed default configuration
@@ -239,6 +263,14 @@ async function ensureTables() {
           )
           ON CONFLICT (key) DO NOTHING;
         `);
+
+        // Notify PostgREST to reload the schema cache so Supabase immediately picks up the new columns
+        try {
+          await client.query(`NOTIFY pgrst, 'reload schema';`);
+          console.log("[Supabase] Notified PostgREST to reload schema cache successfully.");
+        } catch (reloadErr) {
+          console.warn("[Supabase] Could not notify PostgREST schema reload (non-fatal):", reloadErr);
+        }
 
         isBootstrapped = true;
         console.log("[Supabase] Database tables and seed config created successfully.");
@@ -338,7 +370,11 @@ async function saveReminder(reminder: any, mode: 'insert' | 'update' | 'upsert' 
         notes: reminder.notes || '',
         rulesOverride: reminder.rulesOverride || null,
         renewalHistory: reminder.renewalHistory || [],
-        renewalPeriodOverride: reminder.renewalPeriodOverride || null
+        renewalPeriodOverride: reminder.renewalPeriodOverride || null,
+        acknowledged: reminder.acknowledged === true || reminder.acknowledged === 'true',
+        acknowledged_at: reminder.acknowledged_at || reminder.acknowledgedAt || null,
+        customerName: reminder.customerName || null,
+        customerEmail: reminder.customerEmail || null
       };
 
       let query;
@@ -392,9 +428,10 @@ async function saveReminder(reminder: any, mode: 'insert' | 'update' | 'upsert' 
       INSERT INTO reminders (
         id, "itemName", category, "responsibleName", "responsibleEmail", 
         "expiryDate", "renewalDate", status, notes, "rulesOverride", 
-        "renewalHistory", "renewalPeriodOverride"
+        "renewalHistory", "renewalPeriodOverride", acknowledged, "acknowledged_at",
+        "customerName", "customerEmail"
       )
-      VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12)
+      VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16)
       ON CONFLICT (id) DO UPDATE SET
         "itemName" = EXCLUDED."itemName",
         category = EXCLUDED.category,
@@ -406,7 +443,11 @@ async function saveReminder(reminder: any, mode: 'insert' | 'update' | 'upsert' 
         notes = EXCLUDED.notes,
         "rulesOverride" = EXCLUDED."rulesOverride",
         "renewalHistory" = EXCLUDED."renewalHistory",
-        "renewalPeriodOverride" = EXCLUDED."renewalPeriodOverride";
+        "renewalPeriodOverride" = EXCLUDED."renewalPeriodOverride",
+        acknowledged = EXCLUDED.acknowledged,
+        "acknowledged_at" = EXCLUDED."acknowledged_at",
+        "customerName" = EXCLUDED."customerName",
+        "customerEmail" = EXCLUDED."customerEmail";
     `, [
       reminder.id,
       reminder.itemName,
@@ -419,7 +460,11 @@ async function saveReminder(reminder: any, mode: 'insert' | 'update' | 'upsert' 
       reminder.notes || '',
       reminder.rulesOverride ? JSON.stringify(reminder.rulesOverride) : null,
       reminder.renewalHistory ? JSON.stringify(reminder.renewalHistory) : JSON.stringify([]),
-      reminder.renewalPeriodOverride || null
+      reminder.renewalPeriodOverride || null,
+      reminder.acknowledged === true || reminder.acknowledged === 'true',
+      reminder.acknowledged_at || reminder.acknowledgedAt || null,
+      reminder.customerName || null,
+      reminder.customerEmail || null
     ]), 2500);
   } catch (err) {
     console.log("[PostgreSQL Status] Saving reminder exception: fallback activated (Info: " + (err instanceof Error ? err.message : String(err)) + ")");
@@ -739,7 +784,8 @@ async function saveLog(log: any): Promise<void> {
         status: log.status,
         errorDetail: log.errorDetail || null,
         emailSubject: log.emailSubject,
-        emailBody: log.emailBody
+        emailBody: log.emailBody,
+        recipientType: log.recipientType || 'responsible'
       };
       const { error } = await runWithTimeout(s.from('logs').insert(payload), 2500);
       if (!error) {
@@ -771,9 +817,9 @@ async function saveLog(log: any): Promise<void> {
       INSERT INTO logs (
         id, "reminderId", "reminderName", "recipientName", "recipientEmail", 
         "triggerType", "triggerDate", "sentAt", status, "errorDetail", 
-        "emailSubject", "emailBody"
+        "emailSubject", "emailBody", "recipientType"
       )
-      VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12);
+      VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13);
     `, [
       log.id,
       log.reminderId,
@@ -786,7 +832,8 @@ async function saveLog(log: any): Promise<void> {
       log.status,
       log.errorDetail || null,
       log.emailSubject,
-      log.emailBody
+      log.emailBody,
+      log.recipientType || 'responsible'
     ]), 2500);
   } catch (err) {
     console.log("[PostgreSQL Status] Saving log exception: fallback activated (Info: " + (err instanceof Error ? err.message : String(err)) + ")");
@@ -916,15 +963,25 @@ async function checkAndSendReminders(targetDateStr: string, triggerEmails = true
   const newLogs: any[] = [];
 
   for (const reminder of reminders) {
-    // If the reminder status is "Renewed", maybe we don't want to alert on the old expiry.
-    // However, usually "Renewed" means the record has been updated with a new expiry date.
-    // If it's already expired, we still trigger notifications to get people to act.
-    const rules = reminder.rulesOverride || activeGlobalRules;
+    const daysRemaining = getDaysRemaining(reminder.expiryDate, targetDateStr);
+    
+    // Check if the item is OVERDUE (daysRemaining < 0) and not yet renewed/acknowledged
+    // We send a daily repeat email for these until they are acknowledged.
+    const isOverdue = daysRemaining < 0;
+    const isActuallyOverdue = isOverdue && reminder.status !== "Renewed";
+    const isAlreadyAcknowledged = reminder.acknowledged === true || reminder.acknowledged === 'true';
 
+    if (isActuallyOverdue && !isAlreadyAcknowledged) {
+      matches.push({ reminder, rule: "overdue_repeat", daysRemaining });
+      continue; // Skip standard rule evaluation once overdue & repeating daily
+    }
+
+    // Only run standard rules for non-overdue items or already acknowledged overdue ones
+    const rules = reminder.rulesOverride || activeGlobalRules;
     for (const rule of rules) {
       if (checkRuleMatch(reminder, rule, targetDateStr)) {
-        const daysRemaining = getDaysRemaining(reminder.expiryDate, targetDateStr);
         matches.push({ reminder, rule, daysRemaining });
+        break; // Ensure at most one match per day per reminder
       }
     }
   }
@@ -937,20 +994,20 @@ async function checkAndSendReminders(targetDateStr: string, triggerEmails = true
   for (const match of matches) {
     const { reminder, rule, daysRemaining } = match;
     
-    let subject = "";
+    // Consistent Subject Line Format as requested: "Reminder: [Item Name] — [Category] Expiry Alert"
+    const subject = `Reminder: ${reminder.itemName} — ${reminder.category} Expiry Alert`;
+    
     let ruleDesc = "";
     if (rule === "on_expiry") {
-      subject = `⚠️ URGENT: Obligation Expiring Today - ${reminder.itemName}`;
       ruleDesc = "Expires today!";
     } else if (rule === "one_week_before") {
-      subject = `⚠️ Reminder: ${reminder.itemName} expires in 7 days`;
       ruleDesc = "Expires in 7 days.";
     } else if (rule === "one_month_before") {
-      subject = `⏳ Advance Notice: ${reminder.itemName} expires in 1 month`;
       ruleDesc = "Expires in 30 days.";
     } else if (rule === "monthly_first") {
-      subject = `📅 Monthly Status Check: ${reminder.itemName}`;
       ruleDesc = `Monthly review reminder. Expires in ${daysRemaining} days.`;
+    } else if (rule === "overdue_repeat") {
+      ruleDesc = `OVERDUE DAILY ALERT: Expired on ${reminder.expiryDate} (${Math.abs(daysRemaining)} days ago).`;
     }
 
     const isOverdue = daysRemaining < 0;
@@ -958,165 +1015,193 @@ async function checkAndSendReminders(targetDateStr: string, triggerEmails = true
       ? `<span style="color: #EF4444; font-weight: bold;">OVERDUE BY ${Math.abs(daysRemaining)} DAYS</span>`
       : `<span style="color: #F59E0B; font-weight: bold;">${daysRemaining} days remaining</span>`;
 
-    const emailHtml = `
-      <!DOCTYPE html>
-      <html>
-        <head>
-          <meta charset="utf-8">
-          <title>${subject}</title>
-        </head>
-        <body style="font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, Helvetica, Arial, sans-serif; background-color: #F8F9FA; padding: 20px; color: #1F2937; margin: 0;">
-          <div style="max-width: 600px; margin: 0 auto; background-color: #FFFFFF; border-radius: 8px; border: 1px solid #E5E7EB; box-shadow: 0 4px 6px -1px rgba(0, 0, 0, 0.05); overflow: hidden;">
-            <div style="background-color: #2563EB; padding: 24px; text-align: center;">
-              <h1 style="color: #FFFFFF; margin: 0; font-size: 20px; font-weight: 600; letter-spacing: -0.025em;">Obligation Reminder Alert</h1>
-            </div>
-            <div style="padding: 24px; line-height: 1.6;">
-              <p style="margin-top: 0; font-size: 16px; color: #374151;">Hello <strong>${reminder.responsibleName}</strong>,</p>
-              <p style="color: #4B5563;">This is an automated notification regarding a time-sensitive business obligation that requires your attention:</p>
-              
-              <div style="background-color: #F9FAFB; border: 1px solid #F3F4F6; border-left: 4px solid #2563EB; border-radius: 6px; padding: 18px; margin: 20px 0;">
-                <table style="width: 100%; border-collapse: collapse;">
-                  <tr>
-                    <td style="padding: 4px 0; color: #6B7280; font-size: 14px; width: 35%;"><strong>Obligation:</strong></td>
-                    <td style="padding: 4px 0; color: #111827; font-size: 14px;"><strong>${reminder.itemName}</strong></td>
-                  </tr>
-                  <tr>
-                    <td style="padding: 4px 0; color: #6B7280; font-size: 14px;"><strong>Category:</strong></td>
-                    <td style="padding: 4px 0; color: #111827; font-size: 14px;">${reminder.category}</td>
-                  </tr>
-                  <tr>
-                    <td style="padding: 4px 0; color: #6B7280; font-size: 14px;"><strong>Expiry/Due Date:</strong></td>
-                    <td style="padding: 4px 0; color: #111827; font-size: 14px; font-family: monospace;">${reminder.expiryDate}</td>
-                  </tr>
-                  <tr>
-                    <td style="padding: 4px 0; color: #6B7280; font-size: 14px;"><strong>Status:</strong></td>
-                    <td style="padding: 4px 0; color: #111827; font-size: 14px;">${reminder.status}</td>
-                  </tr>
-                  <tr>
-                    <td style="padding: 4px 0; color: #6B7280; font-size: 14px;"><strong>Time Remaining:</strong></td>
-                    <td style="padding: 4px 0; font-size: 14px;">${remainingText}</td>
-                  </tr>
-                  ${reminder.renewalDate ? `
-                  <tr>
-                    <td style="padding: 4px 0; color: #6B7280; font-size: 14px;"><strong>Renewal Date:</strong></td>
-                    <td style="padding: 4px 0; color: #111827; font-size: 14px; font-family: monospace;">${reminder.renewalDate}</td>
-                  </tr>
-                  ` : ""}
-                </table>
-              </div>
-
-              ${reminder.notes ? `
-                <div style="margin-bottom: 20px;">
-                  <h3 style="font-size: 14px; color: #374151; margin-bottom: 6px;">Notes:</h3>
-                  <p style="background-color: #F3F4F6; padding: 12px; border-radius: 6px; font-size: 13px; color: #4B5563; margin: 0; font-style: italic;">"${reminder.notes}"</p>
-                </div>
-              ` : ""}
-
-              <p style="color: #4B5563; font-size: 14px;">Please review this item and, if required, renew or update its details in the **Reminder & Expiry Manager** dashboard.</p>
-              
-              <div style="text-align: center; margin-top: 28px;">
-                <a href="${process.env.APP_URL || "https://ais-dev-22mbj73dwbdzp3reaeb7hk-1020241534221.asia-southeast1.run.app"}" style="background-color: #2563EB; color: #FFFFFF; padding: 12px 24px; text-decoration: none; border-radius: 6px; font-size: 14px; font-weight: 500; display: inline-block; box-shadow: 0 1px 2px 0 rgba(0, 0, 0, 0.05);">Open Expiry Manager</a>
-              </div>
-
-              <div style="margin-top: 24px; text-align: center; border-top: 1px dashed #E5E7EB; padding-top: 20px;">
-                <p style="font-size: 13px; color: #4B5563; margin-bottom: 12px; font-weight: 500;">Snooze this reminder:</p>
-                <div style="display: inline-flex; justify-content: center; gap: 8px;">
-                  <a href="${process.env.APP_URL || "https://ais-dev-22mbj73dwbdzp3reaeb7hk-1020241534221.asia-southeast1.run.app"}/api/reminders/${reminder.id}/snooze?duration=1month" style="background-color: #EFF6FF; color: #2563EB; border: 1px solid #BFDBFE; padding: 8px 16px; text-decoration: none; border-radius: 6px; font-size: 13px; font-weight: 600; display: inline-block; margin-right: 4px;">+1 Month</a>
-                  <a href="${process.env.APP_URL || "https://ais-dev-22mbj73dwbdzp3reaeb7hk-1020241534221.asia-southeast1.run.app"}/api/reminders/${reminder.id}/snooze?duration=1week" style="background-color: #FEF3C7; color: #D97706; border: 1px solid #FDE68A; padding: 8px 16px; text-decoration: none; border-radius: 6px; font-size: 13px; font-weight: 600; display: inline-block; margin-right: 4px;">+1 Week</a>
-                  <a href="${process.env.APP_URL || "https://ais-dev-22mbj73dwbdzp3reaeb7hk-1020241534221.asia-southeast1.run.app"}/api/reminders/${reminder.id}/snooze?duration=1day" style="background-color: #F3F4F6; color: #4B5563; border: 1px solid #D1D5DB; padding: 8px 16px; text-decoration: none; border-radius: 6px; font-size: 13px; font-weight: 600; display: inline-block;">+1 Day</a>
-                </div>
-              </div>
-            </div>
-            <div style="background-color: #F9FAFB; border-top: 1px solid #E5E7EB; padding: 16px; text-align: center; font-size: 12px; color: #9CA3AF;">
-              This is an automated system notification. Please do not reply directly to this email.<br>
-              Reminder Rule Triggered: <strong>${ruleDesc}</strong>
-            </div>
-          </div>
-        </body>
-      </html>
-    `;
-
-    let success = false;
-    let errorDetail = "";
-
-    let recipientEmailForResend = reminder.responsibleEmail;
-    let isRedirected = false;
-
-    // Sandbox Routing: To prevent Resend 403 (unverified recipient) errors, we route all unverified/mock
-    // emails to the user's registered sandbox email address (pranavk.aconsultancy@gmail.com).
-    if (!disableSandboxRedirect && recipientEmailForResend !== "pranavk.aconsultancy@gmail.com") {
-      recipientEmailForResend = "pranavk.aconsultancy@gmail.com";
-      isRedirected = true;
-    }
-
-    let finalEmailHtml = emailHtml;
-    if (isRedirected) {
-      const redirectBadge = `
-        <div style="background-color: #FEF3C7; border: 1px solid #F59E0B; border-radius: 6px; padding: 12px; margin-bottom: 20px; text-align: left; font-size: 13px; color: #92400E; font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;">
-          <strong>Sandbox Notice:</strong> This notification was originally addressed to <strong>${reminder.responsibleName}</strong> (&lt;${reminder.responsibleEmail}&gt;). It has been safely routed to <strong>pranavk.aconsultancy@gmail.com</strong> to comply with Resend Sandbox restrictions and ensure delivery.
-        </div>
-      `;
-      finalEmailHtml = emailHtml.replace(
-        `<div style="padding: 24px; line-height: 1.6;">`,
-        `<div style="padding: 24px; line-height: 1.6;">${redirectBadge}`
-      );
-    }
-
-    const isPlaceholderKey = !resendApiKey || resendApiKey === "MY_RESEND_API_KEY" || resendApiKey.trim() === "";
-
-    if (triggerEmails && !isPlaceholderKey) {
-      try {
-        const response = await fetch("https://api.resend.com/emails", {
-          method: "POST",
-          headers: {
-            "Content-Type": "application/json",
-            "Authorization": `Bearer ${resendApiKey}`
-          },
-          body: JSON.stringify({
-            from: "Expiry Manager <onboarding@resend.dev>",
-            to: [recipientEmailForResend],
-            subject: subject,
-            html: finalEmailHtml
-          })
-        });
-
-        if (response.ok) {
-          success = true;
-          console.log(`Email successfully sent via Resend to ${recipientEmailForResend} (original: ${reminder.responsibleEmail}) for ${reminder.itemName}`);
-        } else {
-          const errRes = await response.json();
-          errorDetail = JSON.stringify(errRes);
-          console.error(`Resend API error: ${errorDetail}`);
-        }
-      } catch (err: any) {
-        errorDetail = err.message || String(err);
-        console.error(`Failed to send email to ${recipientEmailForResend}:`, err);
+    const recipients: { name: string; email: string; isCustomer: boolean }[] = [
+      {
+        name: reminder.responsibleName,
+        email: reminder.responsibleEmail,
+        isCustomer: false
       }
-    } else {
-      // Simulate successful sending for preview & testing when key is missing/placeholder
-      success = true;
-      errorDetail = isPlaceholderKey 
-        ? "Resend API simulated. [RESEND_API_KEY is missing or configured as placeholder in environment secrets. Configure a real key to send actual emails.]" 
-        : "Email simulation triggered (dry-run mode).";
-      console.log(`[SIMULATION] Email would be sent to ${recipientEmailForResend} (original: ${reminder.responsibleEmail}): Subject: "${subject}"`);
+    ];
+
+    if (reminder.customerEmail && reminder.customerEmail.trim()) {
+      recipients.push({
+        name: reminder.customerName || "Customer",
+        email: reminder.customerEmail.trim(),
+        isCustomer: true
+      });
     }
 
-    const logEntry = {
-      id: "log-" + Date.now() + "-" + Math.random().toString(36).substr(2, 5),
-      reminderId: reminder.id,
-      reminderName: reminder.itemName,
-      recipientName: reminder.responsibleName,
-      recipientEmail: reminder.responsibleEmail,
-      triggerType: rule,
-      triggerDate: targetDateStr,
-      sentAt: new Date().toISOString(),
-      status: success ? "success" : "failure",
-      errorDetail: errorDetail || undefined,
-      emailSubject: subject,
-      emailBody: finalEmailHtml
-    };
+    for (const recipient of recipients) {
+      const emailHtml = `
+        <!DOCTYPE html>
+        <html>
+          <head>
+            <meta charset="utf-8">
+            <title>${subject}</title>
+          </head>
+          <body style="font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, Helvetica, Arial, sans-serif; background-color: #F8F9FA; padding: 20px; color: #1F2937; margin: 0;">
+            <div style="max-width: 600px; margin: 0 auto; background-color: #FFFFFF; border-radius: 8px; border: 1px solid #E5E7EB; box-shadow: 0 4px 6px -1px rgba(0, 0, 0, 0.05); overflow: hidden;">
+              <div style="background-color: #2563EB; padding: 24px; text-align: center;">
+                <h1 style="color: #FFFFFF; margin: 0; font-size: 20px; font-weight: 600; letter-spacing: -0.025em;">Obligation Reminder Alert</h1>
+              </div>
+              <div style="padding: 24px; line-height: 1.6;">
+                <p style="margin-top: 0; font-size: 16px; color: #374151;">Hello <strong>${recipient.name}</strong>,</p>
+                <p style="color: #4B5563;">This is an automated notification regarding a time-sensitive business obligation that requires your attention:</p>
+                
+                <div style="background-color: #F9FAFB; border: 1px solid #F3F4F6; border-left: 4px solid #2563EB; border-radius: 6px; padding: 18px; margin: 20px 0;">
+                  <table style="width: 100%; border-collapse: collapse;">
+                    <tr>
+                      <td style="padding: 4px 0; color: #6B7280; font-size: 14px; width: 35%;"><strong>Obligation:</strong></td>
+                      <td style="padding: 4px 0; color: #111827; font-size: 14px;"><strong>${reminder.itemName}</strong></td>
+                    </tr>
+                    <tr>
+                      <td style="padding: 4px 0; color: #6B7280; font-size: 14px;"><strong>Category:</strong></td>
+                      <td style="padding: 4px 0; color: #111827; font-size: 14px;">${reminder.category}</td>
+                    </tr>
+                    <tr>
+                      <td style="padding: 4px 0; color: #6B7280; font-size: 14px;"><strong>Expiry/Due Date:</strong></td>
+                      <td style="padding: 4px 0; color: #111827; font-size: 14px; font-family: monospace;">${reminder.expiryDate}</td>
+                    </tr>
+                    <tr>
+                      <td style="padding: 4px 0; color: #6B7280; font-size: 14px;"><strong>Status:</strong></td>
+                      <td style="padding: 4px 0; color: #111827; font-size: 14px;">${reminder.status}</td>
+                    </tr>
+                    <tr>
+                      <td style="padding: 4px 0; color: #6B7280; font-size: 14px;"><strong>Time Remaining:</strong></td>
+                      <td style="padding: 4px 0; font-size: 14px;">${remainingText}</td>
+                    </tr>
+                    ${reminder.renewalDate ? `
+                    <tr>
+                      <td style="padding: 4px 0; color: #6B7280; font-size: 14px;"><strong>Renewal Date:</strong></td>
+                      <td style="padding: 4px 0; color: #111827; font-size: 14px; font-family: monospace;">${reminder.renewalDate}</td>
+                    </tr>
+                    ` : ""}
+                  </table>
+                </div>
 
-    newLogs.push(logEntry);
+                ${reminder.notes ? `
+                  <div style="margin-bottom: 20px;">
+                    <h3 style="font-size: 14px; color: #374151; margin-bottom: 6px;">Notes:</h3>
+                    <p style="background-color: #F3F4F6; padding: 12px; border-radius: 6px; font-size: 13px; color: #4B5563; margin: 0; font-style: italic;">"${reminder.notes}"</p>
+                  </div>
+                ` : ""}
+
+                ${rule === "overdue_repeat" ? `
+                  <div style="background-color: #FEF2F2; border: 1px solid #FEE2E2; border-radius: 8px; padding: 18px; margin: 20px 0; text-align: center;">
+                    <p style="margin-top: 0; font-size: 14px; color: #991B1B; font-weight: 600; margin-bottom: 10px;">⚠️ Overdue Action Required</p>
+                    <p style="margin-top: 0; font-size: 13px; color: #7F1D1D; margin-bottom: 16px; line-height: 1.4;">This item is overdue. Please click the button below to acknowledge that you are handling this renewal.</p>
+                    <a href="${process.env.APP_URL || "https://ais-dev-22mbj73dwbdzp3reaeb7hk-1020241534221.asia-southeast1.run.app"}/api/reminders/${reminder.id}/acknowledge" style="background-color: #EF4444; color: #FFFFFF; padding: 10px 22px; text-decoration: none; border-radius: 6px; font-size: 13px; font-weight: 700; display: inline-block; box-shadow: 0 1px 2px 0 rgba(0, 0, 0, 0.05); text-transform: uppercase; letter-spacing: 0.025em;">Mark as Acknowledged</a>
+                    <p style="margin-bottom: 0; font-size: 11px; color: #991B1B; margin-top: 10px; font-style: italic;">Acknowledging will stop daily repeat emails, but it will remain red on the dashboard.</p>
+                  </div>
+                ` : ""}
+
+                <p style="color: #4B5563; font-size: 14px;">Please review this item and, if required, renew or update its details in the **Reminder & Expiry Manager** dashboard.</p>
+                
+                <div style="text-align: center; margin-top: 28px;">
+                  <a href="${process.env.APP_URL || "https://ais-dev-22mbj73dwbdzp3reaeb7hk-1020241534221.asia-southeast1.run.app"}" style="background-color: #2563EB; color: #FFFFFF; padding: 12px 24px; text-decoration: none; border-radius: 6px; font-size: 14px; font-weight: 500; display: inline-block; box-shadow: 0 1px 2px 0 rgba(0, 0, 0, 0.05);">Open Expiry Manager</a>
+                </div>
+
+                <div style="margin-top: 24px; text-align: center; border-top: 1px dashed #E5E7EB; padding-top: 20px;">
+                  <p style="font-size: 13px; color: #4B5563; margin-bottom: 12px; font-weight: 500;">Snooze this reminder:</p>
+                  <div style="display: inline-flex; justify-content: center; gap: 8px;">
+                    <a href="${process.env.APP_URL || "https://ais-dev-22mbj73dwbdzp3reaeb7hk-1020241534221.asia-southeast1.run.app"}/api/reminders/${reminder.id}/snooze?duration=1month" style="background-color: #EFF6FF; color: #2563EB; border: 1px solid #BFDBFE; padding: 8px 16px; text-decoration: none; border-radius: 6px; font-size: 13px; font-weight: 600; display: inline-block; margin-right: 4px;">+1 Month</a>
+                    <a href="${process.env.APP_URL || "https://ais-dev-22mbj73dwbdzp3reaeb7hk-1020241534221.asia-southeast1.run.app"}/api/reminders/${reminder.id}/snooze?duration=1week" style="background-color: #FEF3C7; color: #D97706; border: 1px solid #FDE68A; padding: 8px 16px; text-decoration: none; border-radius: 6px; font-size: 13px; font-weight: 600; display: inline-block; margin-right: 4px;">+1 Week</a>
+                    <a href="${process.env.APP_URL || "https://ais-dev-22mbj73dwbdzp3reaeb7hk-1020241534221.asia-southeast1.run.app"}/api/reminders/${reminder.id}/snooze?duration=1day" style="background-color: #F3F4F6; color: #4B5563; border: 1px solid #D1D5DB; padding: 8px 16px; text-decoration: none; border-radius: 6px; font-size: 13px; font-weight: 600; display: inline-block;">+1 Day</a>
+                  </div>
+                </div>
+              </div>
+              <div style="background-color: #F9FAFB; border-top: 1px solid #E5E7EB; padding: 16px; text-align: center; font-size: 12px; color: #9CA3AF;">
+                This is an automated system notification. Please do not reply directly to this email.<br>
+                Reminder Rule Triggered: <strong>${ruleDesc}</strong>
+              </div>
+            </div>
+          </body>
+        </html>
+      `;
+
+      let success = false;
+      let errorDetail = "";
+
+      let recipientEmailForResend = recipient.email;
+      let isRedirected = false;
+
+      // Sandbox Routing: To prevent Resend 403 (unverified recipient) errors, we route all unverified/mock
+      // emails to the user's registered sandbox email address (pranavk.aconsultancy@gmail.com).
+      if (!disableSandboxRedirect && recipientEmailForResend !== "pranavk.aconsultancy@gmail.com") {
+        recipientEmailForResend = "pranavk.aconsultancy@gmail.com";
+        isRedirected = true;
+      }
+
+      let finalEmailHtml = emailHtml;
+      if (isRedirected) {
+        const redirectBadge = `
+          <div style="background-color: #FEF3C7; border: 1px solid #F59E0B; border-radius: 6px; padding: 12px; margin-bottom: 20px; text-align: left; font-size: 13px; color: #92400E; font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;">
+            <strong>Sandbox Notice:</strong> This notification was originally addressed to <strong>${recipient.name}</strong> (&lt;${recipient.email}&gt;). It has been safely routed to <strong>pranavk.aconsultancy@gmail.com</strong> to comply with Resend Sandbox restrictions and ensure delivery.
+          </div>
+        `;
+        finalEmailHtml = emailHtml.replace(
+          `<div style="padding: 24px; line-height: 1.6;">`,
+          `<div style="padding: 24px; line-height: 1.6;">${redirectBadge}`
+        );
+      }
+
+      const isPlaceholderKey = !resendApiKey || resendApiKey === "MY_RESEND_API_KEY" || resendApiKey.trim() === "";
+
+      if (triggerEmails && !isPlaceholderKey) {
+        try {
+          const response = await fetch("https://api.resend.com/emails", {
+            method: "POST",
+            headers: {
+              "Content-Type": "application/json",
+              "Authorization": `Bearer ${resendApiKey}`
+            },
+            body: JSON.stringify({
+              from: "Expiry Manager <onboarding@resend.dev>",
+              to: [recipientEmailForResend],
+              subject: subject,
+              html: finalEmailHtml
+            })
+          });
+
+          if (response.ok) {
+            success = true;
+            console.log(`Email successfully sent via Resend to ${recipientEmailForResend} (original: ${recipient.email}) for ${reminder.itemName}`);
+          } else {
+            const errRes = await response.json();
+            errorDetail = JSON.stringify(errRes);
+            console.error(`Resend API error: ${errorDetail}`);
+          }
+        } catch (err: any) {
+          errorDetail = err.message || String(err);
+          console.error(`Failed to send email to ${recipientEmailForResend}:`, err);
+        }
+      } else {
+        // Simulate successful sending for preview & testing when key is missing/placeholder
+        success = true;
+        errorDetail = isPlaceholderKey 
+          ? "Resend API simulated. [RESEND_API_KEY is missing or configured as placeholder in environment secrets. Configure a real key to send actual emails.]" 
+          : "Email simulation triggered (dry-run mode).";
+        console.log(`[SIMULATION] Email would be sent to ${recipientEmailForResend} (original: ${recipient.email}): Subject: "${subject}"`);
+      }
+
+      const logEntry = {
+        id: "log-" + Date.now() + "-" + Math.random().toString(36).substr(2, 5) + "-" + recipient.email.replace(/[^a-zA-Z0-9]/g, ""),
+        reminderId: reminder.id,
+        reminderName: reminder.itemName,
+        recipientName: recipient.name,
+        recipientEmail: recipient.email,
+        triggerType: rule,
+        triggerDate: targetDateStr,
+        sentAt: new Date().toISOString(),
+        status: success ? "success" : "failure",
+        errorDetail: errorDetail || undefined,
+        emailSubject: subject,
+        emailBody: finalEmailHtml,
+        recipientType: recipient.isCustomer ? "customer" : "responsible"
+      };
+
+      newLogs.push(logEntry);
+    }
   }
 
   // Update DB logs
@@ -1127,16 +1212,181 @@ async function checkAndSendReminders(targetDateStr: string, triggerEmails = true
   return {
     checked: reminders.length,
     sent: newLogs.length,
-    matches: matches.map(m => ({
-      itemName: m.reminder.itemName,
-      recipient: m.reminder.responsibleEmail,
-      rule: m.rule,
-      daysRemaining: m.daysRemaining
-    }))
+    matches: matches.map(m => {
+      let rec = m.reminder.responsibleEmail;
+      if (m.reminder.customerEmail && m.reminder.customerEmail.trim()) {
+        rec += ` & ${m.reminder.customerEmail.trim()}`;
+      }
+      return {
+        itemName: m.reminder.itemName,
+        recipient: rec,
+        rule: m.rule,
+        daysRemaining: m.daysRemaining
+      };
+    })
   };
 }
 
 // REST API Endpoints
+
+// Acknowledge Overdue Reminder from email link
+app.get("/api/reminders/:id/acknowledge", async (req, res) => {
+  const id = req.params.id;
+  try {
+    const reminder = await getReminderById(id);
+    if (!reminder) {
+      return res.status(404).send(`
+        <!DOCTYPE html>
+        <html>
+          <head>
+            <meta charset="utf-8">
+            <title>Obligation Not Found</title>
+            <meta name="viewport" content="width=device-width, initial-scale=1">
+            <style>
+              body {
+                font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, "Helvetica Neue", Arial, sans-serif;
+                background-color: #F3F4F6;
+                color: #1F2937;
+                display: flex;
+                align-items: center;
+                justify-content: center;
+                min-height: 100vh;
+                margin: 0;
+                padding: 20px;
+                box-sizing: border-box;
+              }
+              .card {
+                background-color: #FFFFFF;
+                border-radius: 12px;
+                box-shadow: 0 4px 6px -1px rgba(0, 0, 0, 0.1);
+                border: 1px solid #E5E7EB;
+                padding: 32px;
+                max-width: 480px;
+                width: 100%;
+                text-align: center;
+              }
+              h1 { font-size: 20px; color: #EF4444; margin-bottom: 12px; }
+              p { font-size: 14px; color: #4B5563; line-height: 1.5; margin-bottom: 24px; }
+              .btn { background-color: #2563EB; color: white; padding: 10px 20px; text-decoration: none; border-radius: 6px; font-size: 14px; font-weight: 500; display: inline-block; }
+            </style>
+          </head>
+          <body>
+            <div class="card">
+              <h1>Obligation Not Found</h1>
+              <p>We could not find the specified obligation. It might have been deleted or tracked under a different ID.</p>
+              <a href="/" class="btn">Go to Dashboard</a>
+            </div>
+          </body>
+        </html>
+      `);
+    }
+
+    // Update reminder to be acknowledged
+    const updated = {
+      ...reminder,
+      acknowledged: true,
+      acknowledged_at: new Date().toISOString()
+    };
+    
+    await saveReminder(updated, 'update');
+
+    return res.send(`
+      <!DOCTYPE html>
+      <html>
+        <head>
+          <meta charset="utf-8">
+          <title>Obligation Acknowledged</title>
+          <meta name="viewport" content="width=device-width, initial-scale=1">
+          <style>
+            body {
+              font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, "Helvetica Neue", Arial, sans-serif;
+              background-color: #F3F4F6;
+              color: #1F2937;
+              display: flex;
+              align-items: center;
+              justify-content: center;
+              min-height: 100vh;
+              margin: 0;
+              padding: 20px;
+              box-sizing: border-box;
+            }
+            .card {
+              background-color: #FFFFFF;
+              border-radius: 12px;
+              box-shadow: 0 4px 6px -1px rgba(0, 0, 0, 0.1);
+              border: 1px solid #E5E7EB;
+              padding: 32px;
+              max-width: 480px;
+              width: 100%;
+              text-align: center;
+            }
+            .icon-success {
+              color: #10B981;
+              font-size: 48px;
+              margin-bottom: 16px;
+              display: inline-block;
+            }
+            h1 { font-size: 22px; color: #10B981; margin-bottom: 12px; font-weight: 600; }
+            p { font-size: 14px; color: #4B5563; line-height: 1.5; margin-bottom: 24px; }
+            .details-box {
+              background-color: #F9FAFB;
+              border: 1px solid #F3F4F6;
+              border-radius: 6px;
+              padding: 16px;
+              margin-bottom: 24px;
+              text-align: left;
+            }
+            .details-row {
+              display: flex;
+              justify-content: space-between;
+              padding: 4px 0;
+              font-size: 13px;
+              border-bottom: 1px solid #F3F4F6;
+            }
+            .details-row:last-child {
+              border-bottom: none;
+            }
+            .label { color: #6B7280; font-weight: 500; }
+            .val { color: #111827; font-weight: 600; }
+            .btn { background-color: #2563EB; color: white; padding: 10px 20px; text-decoration: none; border-radius: 6px; font-size: 14px; font-weight: 500; display: inline-block; transition: background-color 0.15s; }
+            .btn:hover { background-color: #1D4ED8; }
+          </style>
+        </head>
+        <body>
+          <div class="card">
+            <div class="icon-success">✓</div>
+            <h1>Acknowledge Confirmation</h1>
+            <p>Thanks, this has been marked as acknowledged.</p>
+            
+            <div class="details-box">
+              <div class="details-row">
+                <span class="label">Obligation Name:</span>
+                <span class="val">${reminder.itemName}</span>
+              </div>
+              <div class="details-row">
+                <span class="label">Category:</span>
+                <span class="val">${reminder.category}</span>
+              </div>
+              <div class="details-row">
+                <span class="label">Expiry Date:</span>
+                <span class="val" style="font-family: monospace;">${reminder.expiryDate}</span>
+              </div>
+              <div class="details-row">
+                <span class="label">Acknowledged By:</span>
+                <span class="val">${reminder.responsibleName}</span>
+              </div>
+            </div>
+
+            <a href="/" class="btn">Go to Dashboard</a>
+          </div>
+        </body>
+      </html>
+    `);
+  } catch (err: any) {
+    console.error("Acknowledge error:", err);
+    return res.status(500).send(`An error occurred: ${err.message || String(err)}`);
+  }
+});
 
 // Snooze Reminder from email link
 app.get("/api/reminders/:id/snooze", async (req, res) => {
@@ -1483,7 +1733,25 @@ app.put("/api/reminders/:id", async (req, res) => {
     const id = req.params.id;
     const existing = await getReminderById(id);
     if (existing) {
-      const updated = { ...existing, ...req.body, id };
+      let acknowledged = existing.acknowledged;
+      let acknowledged_at = existing.acknowledged_at;
+      
+      const newExpiry = req.body.expiryDate;
+      const existingExpiry = existing.expiryDate;
+      const isRenewed = req.body.status === 'Renewed' || (req.body.status === 'Active' && existing.status === 'Expired');
+      
+      if ((newExpiry && newExpiry !== existingExpiry) || isRenewed || req.body.resetAcknowledged) {
+        acknowledged = false;
+        acknowledged_at = null;
+      }
+
+      const updated = {
+        ...existing,
+        ...req.body,
+        id,
+        acknowledged,
+        acknowledged_at
+      };
       await saveReminder(updated, 'update');
       res.json(updated);
     } else {
@@ -1729,9 +1997,15 @@ app.post("/api/check-reminders", async (req, res) => {
 });
 
 // Daily Scheduled Trigger check
-// Runs on startup, and then every 24 hours
+let lastSchedulerRunDate: string | null = null;
+
 function runDailyScheduler() {
   const todayStr = new Date().toISOString().split("T")[0];
+  if (lastSchedulerRunDate === todayStr) {
+    console.log(`[Scheduler] Daily check already ran for today (${todayStr}). Skipping repeat check.`);
+    return;
+  }
+  lastSchedulerRunDate = todayStr;
   console.log(`[Scheduler] Running daily scheduled trigger check for ${todayStr}...`);
   checkAndSendReminders(todayStr, true)
     .then(result => {
@@ -1742,10 +2016,46 @@ function runDailyScheduler() {
     });
 }
 
-// Delay the first execution slightly to let server start up cleanly
-setTimeout(runDailyScheduler, 5000);
-// Run every 24 hours
-setInterval(runDailyScheduler, 24 * 60 * 60 * 1000);
+function startScheduler() {
+  const schedulerHour = parseInt(process.env.SCHEDULER_HOUR || "7", 10);
+  const now = new Date();
+  
+  // Calculate today's target time
+  const todayTarget = new Date();
+  todayTarget.setHours(schedulerHour, 0, 0, 0);
+  
+  if (now.getTime() >= todayTarget.getTime()) {
+    // We are past today's scheduler hour. Run the check now (if not already run today)
+    console.log(`[Scheduler] Server started after scheduler hour (${schedulerHour}:00). Running initial check in 5 seconds...`);
+    setTimeout(runDailyScheduler, 5000);
+    
+    // Schedule next run for tomorrow at 7:00 AM
+    const tomorrowTarget = new Date();
+    tomorrowTarget.setDate(tomorrowTarget.getDate() + 1);
+    tomorrowTarget.setHours(schedulerHour, 0, 0, 0);
+    const delay = tomorrowTarget.getTime() - now.getTime();
+    console.log(`[Scheduler] Scheduling next daily check for ${tomorrowTarget.toString()} (in ${Math.round(delay / 1000 / 60)} minutes)`);
+    
+    setTimeout(() => {
+      runDailyScheduler();
+      // Keep scheduling every 24 hours
+      setInterval(runDailyScheduler, 24 * 60 * 60 * 1000);
+    }, delay);
+  } else {
+    // We are before today's scheduler hour. Schedule for today at 7:00 AM
+    const delay = todayTarget.getTime() - now.getTime();
+    console.log(`[Scheduler] Server started before scheduler hour (${schedulerHour}:00). Scheduling check for ${todayTarget.toString()} (in ${Math.round(delay / 1000 / 60)} minutes)`);
+    
+    setTimeout(() => {
+      runDailyScheduler();
+      // Keep scheduling every 24 hours
+      setInterval(runDailyScheduler, 24 * 60 * 60 * 1000);
+    }, delay);
+  }
+}
+
+// Start the scheduler
+startScheduler();
 
 // Process-level unhandled exception/rejection loggers
 process.on("unhandledRejection", (reason, promise) => {
