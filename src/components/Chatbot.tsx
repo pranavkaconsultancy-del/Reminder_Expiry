@@ -350,10 +350,14 @@ export default function Chatbot({ reminders, chatbotLogo }: ChatbotProps) {
     loaded: boolean;
     geminiConfigured: boolean;
     error: string | null;
+    isStaticSiteError: boolean;
+    isSleepingError: boolean;
   }>({
     loaded: false,
     geminiConfigured: true,
     error: null,
+    isStaticSiteError: false,
+    isSleepingError: false,
   });
 
   // Check the AI setup status on mount
@@ -361,6 +365,26 @@ export default function Chatbot({ reminders, chatbotLogo }: ChatbotProps) {
     async function checkAiStatus() {
       try {
         const response = await fetch("/api/status");
+        if (response.status === 404) {
+          setAiStatus({
+            loaded: true,
+            geminiConfigured: false,
+            error: "404 Not Found",
+            isStaticSiteError: true,
+            isSleepingError: false
+          });
+          return;
+        }
+        if (response.status >= 500) {
+          setAiStatus({
+            loaded: true,
+            geminiConfigured: false,
+            error: `Server Error (HTTP ${response.status})`,
+            isStaticSiteError: false,
+            isSleepingError: true
+          });
+          return;
+        }
         if (!response.ok) {
           throw new Error(`Server returned HTTP ${response.status}`);
         }
@@ -368,14 +392,19 @@ export default function Chatbot({ reminders, chatbotLogo }: ChatbotProps) {
         setAiStatus({
           loaded: true,
           geminiConfigured: data.geminiConfigured !== false,
-          error: null
+          error: data.geminiConfigured === false ? "GEMINI_API_KEY is not set on the server" : null,
+          isStaticSiteError: false,
+          isSleepingError: false
         });
       } catch (err: any) {
         console.error("Failed to fetch server AI status:", err);
+        const isNetworkOrTimeout = !err.status || err.message?.includes("fetch") || err.message?.includes("NetworkError");
         setAiStatus({
           loaded: true,
           geminiConfigured: false,
-          error: err.message || "Could not reach full-stack backend server"
+          error: err.message || "Could not reach full-stack backend server",
+          isStaticSiteError: false,
+          isSleepingError: isNetworkOrTimeout // Potential cold start/sleeping server
         });
       }
     }
@@ -520,20 +549,22 @@ export default function Chatbot({ reminders, chatbotLogo }: ChatbotProps) {
     } catch (err: any) {
       console.warn("Gemini API error (falling back to client-side reasoning):", err);
       
+      const errorDetail = err?.message || String(err);
+      
       // Since Gemini failed (possibly due to 429/quota limits or network offline), 
       // compute a highly accurate local query fallback so the user always gets their data!
-      const isQuotaExceeded = err.message && (
-        err.message.includes("quota") || 
-        err.message.includes("429") || 
-        err.message.includes("limit") || 
-        err.message.includes("RESOURCE_EXHAUSTED")
+      const isQuotaExceeded = errorDetail && (
+        errorDetail.includes("quota") || 
+        errorDetail.includes("429") || 
+        errorDetail.includes("limit") || 
+        errorDetail.includes("RESOURCE_EXHAUSTED")
       );
 
       const localFallback = analyzeQuestionLocally(question, reminders) || analyzeQuestionLocally("status overview", reminders);
       
       const fallbackMsg = isQuotaExceeded
-        ? `⚠️ **Gemini API Daily Quota Limit Reached (Free Tier).**\n\nTo make sure you get uninterrupted access, I've analyzed your question and computed the exact live response locally from your active obligations database:\n\n${localFallback}`
-        : `⚠️ **Could not connect to Gemini AI backend.**\n\nHere is the live analysis computed directly from your active database:\n\n${localFallback}`;
+        ? `⚠️ **Gemini API Daily Quota Limit Reached (Free Tier).**\n\n*Technical Details:* \`${errorDetail}\`\n\nTo make sure you get uninterrupted access, I've analyzed your question and computed the exact live response locally from your active obligations database:\n\n${localFallback}`
+        : `⚠️ **Chatbot Unavailable: Connection to Gemini AI backend failed.**\n\n*Technical Details:* \`${errorDetail}\`\n\nI've fallen back to browser-side local analysis of your active obligations database to answer your question:\n\n${localFallback}`;
 
       setMessages(prev => [
         ...prev,
@@ -706,15 +737,40 @@ export default function Chatbot({ reminders, chatbotLogo }: ChatbotProps) {
 
           {/* AI Status Warning Banner */}
           {aiStatus.loaded && !aiStatus.geminiConfigured && (
-            <div className="bg-amber-50 border-b border-amber-200 p-3 flex gap-2 text-[11px] text-amber-800 leading-normal font-medium shadow-xs">
-              <AlertTriangle className="w-4 h-4 text-amber-600 shrink-0 mt-0.5" />
+            <div className="bg-amber-50 border-b border-amber-200 p-3.5 flex gap-2.5 text-[11px] text-amber-900 leading-normal font-medium shadow-xs">
+              <AlertTriangle className="w-4 h-4 text-amber-600 shrink-0 mt-0.5 animate-bounce" />
               <div>
-                <span className="font-bold block">Chatbot Local Mode Active</span>
-                <span>
-                  {aiStatus.error 
-                    ? `Backend connection error: ${aiStatus.error}.` 
-                    : "The GEMINI_API_KEY environment variable is not set on the server. The chatbot will perform analysis locally in your browser."}
-                </span>
+                {aiStatus.isStaticSiteError ? (
+                  <>
+                    <span className="font-extrabold text-amber-950 block text-xs">⚠️ Render Static Site Detected!</span>
+                    <span className="block mt-1 text-amber-800">
+                      The server returned a <strong>404 Not Found</strong>. This happens when the app is deployed as a <em>Static Site</em> instead of a <strong>Web Service</strong>.
+                    </span>
+                    <span className="block mt-1.5 text-amber-700 bg-amber-100/50 p-2 rounded border border-amber-200/50">
+                      <strong>How to fix:</strong> Delete this Static Site on Render, and create a new <strong>Web Service</strong>. Connect your repository, set the Start Command to <code className="font-mono text-[10px] bg-white px-1 py-0.5 rounded">npm start</code>, and add the required environment variables in the <em>Environment</em> tab.
+                    </span>
+                  </>
+                ) : aiStatus.isSleepingError ? (
+                  <>
+                    <span className="font-extrabold text-amber-950 block text-xs">⏳ Server Cold Start / Sleeping</span>
+                    <span className="block mt-1 text-amber-800">
+                      Could not establish a connection to the full-stack Express server. If this app is on Render's free tier, the backend spins down during inactivity.
+                    </span>
+                    <span className="block mt-1.5 text-amber-700">
+                      <strong>How to fix:</strong> Please wait <strong>30-60 seconds</strong> for the server to wake up, then refresh this page to connect the AI chatbot.
+                    </span>
+                  </>
+                ) : (
+                  <>
+                    <span className="font-extrabold text-amber-950 block text-xs">⚠️ GEMINI_API_KEY Not Configured</span>
+                    <span className="block mt-1 text-amber-800">
+                      The chatbot is running in <strong>Local Analysis Mode</strong>. It will perform reasoning directly inside your browser instead of using full Gemini intelligence.
+                    </span>
+                    <span className="block mt-1.5 text-amber-700 bg-amber-100/50 p-2 rounded border border-amber-200/50">
+                      <strong>How to fix:</strong> Go to your Render Service Dashboard &rarr; <strong>Environment</strong> tab, add the environment variable <code className="font-mono text-[10px] bg-white px-1 py-0.5 rounded">GEMINI_API_KEY</code> with your Gemini key, and click <strong>"Clear build cache & deploy"</strong>.
+                    </span>
+                  </>
+                )}
               </div>
             </div>
           )}
