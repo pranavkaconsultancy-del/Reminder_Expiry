@@ -345,6 +345,43 @@ export default function Chatbot({ reminders, chatbotLogo }: ChatbotProps) {
   const [isLoading, setIsLoading] = useState(false);
   const messagesEndRef = useRef<HTMLDivElement>(null);
 
+  // AI Configuration/Status state
+  const [aiStatus, setAiStatus] = useState<{
+    loaded: boolean;
+    geminiConfigured: boolean;
+    error: string | null;
+  }>({
+    loaded: false,
+    geminiConfigured: true,
+    error: null,
+  });
+
+  // Check the AI setup status on mount
+  useEffect(() => {
+    async function checkAiStatus() {
+      try {
+        const response = await fetch("/api/status");
+        if (!response.ok) {
+          throw new Error(`Server returned HTTP ${response.status}`);
+        }
+        const data = await response.json();
+        setAiStatus({
+          loaded: true,
+          geminiConfigured: data.geminiConfigured !== false,
+          error: null
+        });
+      } catch (err: any) {
+        console.error("Failed to fetch server AI status:", err);
+        setAiStatus({
+          loaded: true,
+          geminiConfigured: false,
+          error: err.message || "Could not reach full-stack backend server"
+        });
+      }
+    }
+    checkAiStatus();
+  }, []);
+
   // Initialize with a welcome message
   useEffect(() => {
     if (messages.length === 0) {
@@ -666,6 +703,21 @@ export default function Chatbot({ reminders, chatbotLogo }: ChatbotProps) {
               </button>
             </div>
           </div>
+
+          {/* AI Status Warning Banner */}
+          {aiStatus.loaded && !aiStatus.geminiConfigured && (
+            <div className="bg-amber-50 border-b border-amber-200 p-3 flex gap-2 text-[11px] text-amber-800 leading-normal font-medium shadow-xs">
+              <AlertTriangle className="w-4 h-4 text-amber-600 shrink-0 mt-0.5" />
+              <div>
+                <span className="font-bold block">Chatbot Local Mode Active</span>
+                <span>
+                  {aiStatus.error 
+                    ? `Backend connection error: ${aiStatus.error}.` 
+                    : "The GEMINI_API_KEY environment variable is not set on the server. The chatbot will perform analysis locally in your browser."}
+                </span>
+              </div>
+            </div>
+          )}
 
           {/* Messages Area */}
           <div className="flex-1 overflow-y-auto p-4 bg-gray-50/50 space-y-4">

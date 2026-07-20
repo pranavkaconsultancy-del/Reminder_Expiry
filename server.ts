@@ -1699,9 +1699,12 @@ app.get("/api/reminders/:id/snooze", async (req, res) => {
 app.get("/api/status", (req, res) => {
   const isSupabaseSdk = getSupabaseClient() !== null;
   const isDirectPg = getPool() !== null;
+  const geminiApiKey = process.env.GEMINI_API_KEY;
+  const isGeminiConfigured = !!geminiApiKey && geminiApiKey.trim() !== "" && geminiApiKey !== "MY_GEMINI_API_KEY";
   res.json({
     database: (isSupabaseSdk || isDirectPg) ? "supabase" : "local",
-    urlConfigured: isSupabaseSdk || isDirectPg || !!(process.env.SUPABASE_DATABASE_URL || process.env.DATABASE_URL || process.env.SUPABASE_URL || process.env.SUPABASE_ANON_KEY)
+    urlConfigured: isSupabaseSdk || isDirectPg || !!(process.env.SUPABASE_DATABASE_URL || process.env.DATABASE_URL || process.env.SUPABASE_URL || process.env.SUPABASE_ANON_KEY),
+    geminiConfigured: isGeminiConfigured
   });
 });
 
