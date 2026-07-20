@@ -24,6 +24,7 @@ import {
   Printer
 } from "lucide-react";
 import { Reminder, GlobalConfig } from "../types";
+import { DatabaseStatus } from "../lib/api";
 import SyncAILogo from "./SyncAILogo";
 import { jsPDF } from "jspdf";
 
@@ -31,6 +32,7 @@ interface DashboardProps {
   reminders: Reminder[];
   categories: string[];
   config: GlobalConfig;
+  dbStatus?: DatabaseStatus | null;
   onAddNew: () => void;
   onEdit: (reminder: Reminder) => void;
   onDelete: (id: string) => Promise<void>;
@@ -80,6 +82,7 @@ export default function Dashboard({
   reminders,
   categories,
   config,
+  dbStatus,
   onAddNew,
   onEdit,
   onDelete,
@@ -830,6 +833,36 @@ export default function Dashboard({
 
   return (
     <div className="space-y-6" id="dashboard-screen">
+      
+      {/* Supabase Error Alert Banner */}
+      {dbStatus?.error && (
+        <div className="bg-red-50 border border-red-200 rounded-xl p-5 shadow-xs animate-fade-in flex gap-4">
+          <div className="p-2.5 bg-red-100 text-red-600 rounded-lg shrink-0 mt-0.5">
+            <ShieldAlert className="w-5 h-5 animate-pulse" />
+          </div>
+          <div className="space-y-1.5 flex-1">
+            <h3 className="text-sm font-black text-red-950 uppercase tracking-wide">
+              Supabase Connection Failure
+            </h3>
+            <p className="text-xs text-red-900 leading-relaxed">
+              We encountered an issue attempting to fetch compliance and obligation records from your Supabase database. The dashboard has safely fallen back to local web-storage mode, but the live cloud data is unreachable.
+            </p>
+            <div className="bg-white/80 border border-red-100/50 rounded-lg p-3 mt-2 text-xs font-mono text-red-800 break-all select-all">
+              <strong>Error Code & Reason:</strong> {dbStatus.error}
+            </div>
+            <div className="text-xs text-red-700/85 mt-2 bg-red-100/30 p-3 rounded-lg border border-red-200/40">
+              <span className="font-bold block text-red-800 text-[11px] uppercase tracking-wider mb-1">🛠️ How to Resolve in Vercel:</span>
+              <ul className="list-disc list-inside space-y-1 text-[11px]">
+                <li>Go to your **Vercel Project Settings &rarr; Environment Variables** tab.</li>
+                <li>Ensure you have added <code className="font-mono bg-white px-1 py-0.5 rounded border border-red-200/50">SUPABASE_URL</code> and <code className="font-mono bg-white px-1 py-0.5 rounded border border-red-200/50">SUPABASE_ANON_KEY</code>.</li>
+                <li>Ensure you also configure <code className="font-mono bg-white px-1 py-0.5 rounded border border-red-200/50">SUPABASE_DATABASE_URL</code> for backend pooling.</li>
+                <li>**IMPORTANT:** Since you are deploying a custom full-stack backend server in Node, do <strong>NOT</strong> prefix these with <code className="font-mono bg-white px-1">VITE_</code> because they are accessed in server-side routes (<code className="font-mono bg-white px-1">process.env.*</code>).</li>
+                <li>After adding variables, trigger a <strong>redeploy</strong> ("Redeploy" button in Vercel) for the changes to take effect!</li>
+              </ul>
+            </div>
+          </div>
+        </div>
+      )}
       
       {/* 1. ON-OPEN / ON-REFRESH NOTIFICATIONS PANEL */}
       {showOnOpenPopup && urgentReminders.length > 0 && (

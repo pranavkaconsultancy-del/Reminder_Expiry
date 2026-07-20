@@ -450,6 +450,7 @@ export default function App() {
                 reminders={reminders}
                 categories={config.categories}
                 config={config}
+                dbStatus={dbStatus}
                 onAddNew={handleAddNewClick}
                 onEdit={handleEditClick}
                 onDelete={handleDeleteReminder}

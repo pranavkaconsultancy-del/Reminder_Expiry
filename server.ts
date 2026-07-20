@@ -1696,15 +1696,43 @@ app.get("/api/reminders/:id/snooze", async (req, res) => {
 });
 
 // 0. GET Database Status for UI Indicator
-app.get("/api/status", (req, res) => {
-  const isSupabaseSdk = getSupabaseClient() !== null;
-  const isDirectPg = getPool() !== null;
+app.get("/api/status", async (req, res) => {
+  const s = getSupabaseClient();
+  const p = getPool();
   const geminiApiKey = process.env.GEMINI_API_KEY;
   const isGeminiConfigured = !!geminiApiKey && geminiApiKey.trim() !== "" && geminiApiKey !== "MY_GEMINI_API_KEY";
+
+  let dbType: "supabase" | "local" = "local";
+  const urlConfigured = !!(process.env.SUPABASE_DATABASE_URL || process.env.DATABASE_URL || process.env.SUPABASE_URL || process.env.SUPABASE_ANON_KEY);
+  let dbError: string | null = null;
+
+  if (s) {
+    try {
+      const { error } = await runWithTimeout(s.from('reminders').select('id').limit(1), 2000);
+      if (error) {
+        dbError = `Supabase query failed: ${error.message} (Code: ${error.code})${error.hint ? '. Hint: ' + error.hint : ''}`;
+      } else {
+        dbType = "supabase";
+      }
+    } catch (err: any) {
+      dbError = `Supabase connection exception: ${err?.message || String(err)}`;
+    }
+  } else if (p) {
+    try {
+      await runWithTimeout(p.query('SELECT 1'), 2000);
+      dbType = "supabase";
+    } catch (err: any) {
+      dbError = `PostgreSQL query failed: ${err?.message || String(err)}`;
+    }
+  } else if (urlConfigured) {
+    dbError = "Supabase environment variables are set but client initialization failed. Check the format of SUPABASE_URL / SUPABASE_ANON_KEY / SUPABASE_DATABASE_URL.";
+  }
+
   res.json({
-    database: (isSupabaseSdk || isDirectPg) ? "supabase" : "local",
-    urlConfigured: isSupabaseSdk || isDirectPg || !!(process.env.SUPABASE_DATABASE_URL || process.env.DATABASE_URL || process.env.SUPABASE_URL || process.env.SUPABASE_ANON_KEY),
-    geminiConfigured: isGeminiConfigured
+    database: dbType,
+    urlConfigured: urlConfigured,
+    geminiConfigured: isGeminiConfigured,
+    error: dbError
   });
 });
 

@@ -108,6 +108,7 @@ export async function sendTestEmail(email: string): Promise<{ success: boolean; 
 export interface DatabaseStatus {
   database: "supabase" | "local";
   urlConfigured: boolean;
+  error?: string | null;
 }
 
 export async function fetchDatabaseStatus(): Promise<DatabaseStatus> {
