@@ -13,8 +13,8 @@ interface ParsedRow {
   category: string;
   responsibleName: string;
   responsibleEmail: string;
-  customerName?: string;
-  customerEmail?: string;
+  customer_name?: string;
+  customer_email?: string;
   expiryDate: string;
   renewalDate: string;
   notes: string;
@@ -135,8 +135,8 @@ export default function ExcelUpload({ onUploadSuccess, categories }: ExcelUpload
             category,
             responsibleName: person,
             responsibleEmail: email,
-            customerName: customerName || undefined,
-            customerEmail: customerEmail || undefined,
+            customer_name: customerName || undefined,
+            customer_email: customerEmail || undefined,
             expiryDate: expiry,
             renewalDate: renewal,
             notes,
@@ -217,8 +217,8 @@ export default function ExcelUpload({ onUploadSuccess, categories }: ExcelUpload
         renewalDate: row.renewalDate,
         status,
         notes: row.notes,
-        customerName: row.customerName || null,
-        customerEmail: row.customerEmail || null
+        customer_name: row.customer_name || null,
+        customer_email: row.customer_email || null
       };
     });
 
@@ -402,10 +402,10 @@ export default function ExcelUpload({ onUploadSuccess, categories }: ExcelUpload
                         <div className="text-[10px] text-gray-400">{row.responsibleEmail}</div>
                       </td>
                       <td className="py-3 px-4">
-                        {row.customerEmail ? (
+                        {row.customer_email ? (
                           <>
-                            <div className="font-semibold text-blue-700">{row.customerName || "-"}</div>
-                            <div className="text-[10px] text-blue-500">{row.customerEmail}</div>
+                            <div className="font-semibold text-blue-700">{row.customer_name || "-"}</div>
+                            <div className="text-[10px] text-blue-500">{row.customer_email}</div>
                           </>
                         ) : (
                           <span className="text-gray-400 font-normal italic">-</span>

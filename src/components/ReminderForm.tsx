@@ -1,5 +1,5 @@
 import React, { useState, useEffect } from "react";
-import { X, Calendar, Plus, Save, RotateCcw, AlertCircle } from "lucide-react";
+import { X, Calendar, Plus, Save, RotateCcw, AlertCircle, UploadCloud, Sparkles, Loader2 } from "lucide-react";
 import { Reminder, ReminderRuleInterval, RULE_LABELS } from "../types";
 
 interface ReminderFormProps {
@@ -8,6 +8,7 @@ interface ReminderFormProps {
   onSave: (reminderData: Omit<Reminder, "id">) => Promise<void>;
   onCancel: () => void;
   onAddCategory: (category: string) => void;
+  reminders?: Reminder[]; // optional list for smart suggestions
 }
 
 const RULE_OPTIONS: { value: ReminderRuleInterval; label: string }[] = [
@@ -22,7 +23,8 @@ export default function ReminderForm({
   categories,
   onSave,
   onCancel,
-  onAddCategory
+  onAddCategory,
+  reminders
 }: ReminderFormProps) {
   const [itemName, setItemName] = useState("");
   const [category, setCategory] = useState("");
@@ -36,6 +38,19 @@ export default function ReminderForm({
   const [customerName, setCustomerName] = useState("");
   const [customerEmail, setCustomerEmail] = useState("");
   
+  // AI features local state
+  const [isUploading, setIsUploading] = useState(false);
+  const [aiSuggestions, setAiSuggestions] = useState<{
+    itemName?: boolean;
+    category?: boolean;
+    expiryDate?: boolean;
+  }>({});
+  const [smartCategorySuggestion, setSmartCategorySuggestion] = useState<string | null>(null);
+  const [timingSuggestion, setTimingSuggestion] = useState<{
+    text: string;
+    rules: ReminderRuleInterval[];
+  } | null>(null);
+
   // Rules configuration
   const [useGlobalRules, setUseGlobalRules] = useState(true);
   const [rulesOverride, setRulesOverride] = useState<ReminderRuleInterval[]>([
@@ -49,6 +64,188 @@ export default function ReminderForm({
   const [error, setError] = useState<string | null>(null);
   const [isSubmitting, setIsSubmitting] = useState(false);
 
+  // Voice note state
+  const [isRecording, setIsRecording] = useState(false);
+  const [mediaRecorder, setMediaRecorder] = useState<MediaRecorder | null>(null);
+  const [audioUrl, setAudioUrl] = useState<string | null>(null);
+  const [audioBlob, setAudioBlob] = useState<Blob | null>(null);
+  const [isTranscribing, setIsTranscribing] = useState(false);
+  const [voiceReviewText, setVoiceReviewText] = useState<string | null>(null);
+  const [microphoneError, setMicrophoneError] = useState<string | null>(null);
+
+  // File analysis handler
+  const handleFileUpload = async (e: React.ChangeEvent<HTMLInputElement>) => {
+    const file = e.target.files?.[0];
+    if (!file) return;
+
+    setIsUploading(true);
+    setError(null);
+    setAiSuggestions({});
+
+    try {
+      const reader = new FileReader();
+      const base64Promise = new Promise<string>((resolve, reject) => {
+        reader.onload = () => {
+          const result = reader.result as string;
+          const base64Data = result.split(",")[1];
+          resolve(base64Data);
+        };
+        reader.onerror = (err) => reject(err);
+      });
+      reader.readAsDataURL(file);
+      const base64Data = await base64Promise;
+
+      const response = await fetch("/api/ai/analyze-document", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          fileBase64: base64Data,
+          mimeType: file.type || "application/pdf"
+        })
+      });
+
+      if (!response.ok) {
+        const errData = await response.json();
+        throw new Error(errData.error || "Failed to analyze document");
+      }
+
+      const result = await response.json();
+      const suggestions: typeof aiSuggestions = {};
+
+      if (result.itemName) {
+        setItemName(result.itemName);
+        suggestions.itemName = true;
+      }
+      if (result.category) {
+        if (categories.includes(result.category)) {
+          setCategory(result.category);
+          suggestions.category = true;
+        } else {
+          onAddCategory(result.category);
+          setCategory(result.category);
+          suggestions.category = true;
+        }
+      }
+      if (result.expiryDate) {
+        // Run expiry change calculations
+        const dateVal = result.expiryDate;
+        setExpiryDate(dateVal);
+        if (dateVal) {
+          const today = new Date();
+          today.setHours(0, 0, 0, 0);
+          const expiry = new Date(dateVal);
+          expiry.setHours(0, 0, 0, 0);
+          if (expiry < today) {
+            setStatus("Expired");
+          } else {
+            setStatus("Active");
+          }
+        }
+        suggestions.expiryDate = true;
+      }
+
+      setAiSuggestions(suggestions);
+    } catch (err: any) {
+      setError(err.message || "An error occurred during document parsing.");
+    } finally {
+      setIsUploading(false);
+    }
+  };
+
+  // Typing-based category suggestor
+  useEffect(() => {
+    if (!itemName.trim() || reminder) {
+      setSmartCategorySuggestion(null);
+      return;
+    }
+
+    const words = itemName.toLowerCase().split(/\s+/).filter(w => w.length >= 3);
+    if (words.length === 0) {
+      setSmartCategorySuggestion(null);
+      return;
+    }
+
+    // Try finding in database records
+    if (reminders && reminders.length > 0) {
+      const matchCounts: Record<string, number> = {};
+      for (const r of reminders) {
+        const rNameLower = (r.itemName || "").toLowerCase();
+        let matches = 0;
+        for (const word of words) {
+          if (rNameLower.includes(word)) {
+            matches++;
+          }
+        }
+        if (matches > 0 && r.category) {
+          matchCounts[r.category] = (matchCounts[r.category] || 0) + matches;
+        }
+      }
+
+      const sortedMatches = Object.entries(matchCounts).sort((a, b) => b[1] - a[1]);
+      if (sortedMatches.length > 0) {
+        const suggested = sortedMatches[0][0];
+        if (suggested !== category) {
+          setSmartCategorySuggestion(suggested);
+          return;
+        }
+      }
+    }
+
+    // Fallback dictionary
+    const fallbackRules = [
+      { keywords: ["insurance", "allianz", "policy", "liability", "axa", "fwd"], category: "Insurance" },
+      { keywords: ["visa", "passport", "permit", "immigrate", "workpermit"], category: "Employee Visa" },
+      { keywords: ["license", "software", "saas", "adobe", "zoom", "microsoft", "office", "aws", "gcp", "azure", "figma", "github", "copilot"], category: "Software License" },
+      { keywords: ["amc", "annual maintenance", "contractor", "yearly servicing"], category: "AMC" },
+      { keywords: ["certificate", "compliance", "audit", "permit", "iso", "regulatory"], category: "Compliance Certificate" },
+      { keywords: ["vehicle", "car", "truck", "motor", "auto", "vehicle insurance", "fleet"], category: "Vehicle Insurance" },
+      { keywords: ["equipment", "printer", "ac", "air condition", "aircon", "servicing", "elevator", "generator", "repair"], category: "Equipment Servicing" },
+      { keywords: ["pay", "payment", "due", "invoice", "bill", "rent", "tax", "repayment", "loan", "emi", "interest", "vendor"], category: "Payment Due" },
+      { keywords: ["subscription", "hosting", "domain", "spotify", "netflix", "premium", "cloud", "monthly"], category: "Subscription" },
+      { keywords: ["asset", "laptop", "server", "office lease", "furniture", "macbook"], category: "Company Asset" }
+    ];
+
+    for (const rule of fallbackRules) {
+      if (rule.keywords.some(kw => words.some(w => w.includes(kw) || kw.includes(w)))) {
+        const matchedCat = categories.find(c => c.toLowerCase() === rule.category.toLowerCase()) || rule.category;
+        if (matchedCat !== category) {
+          setSmartCategorySuggestion(matchedCat);
+          return;
+        }
+      }
+    }
+
+    setSmartCategorySuggestion(null);
+  }, [itemName, category, reminders, categories, reminder]);
+
+  // Lead time timing suggestions based on category
+  useEffect(() => {
+    if (!category) {
+      setTimingSuggestion(null);
+      return;
+    }
+
+    const catLower = category.toLowerCase();
+    if (catLower.includes("insurance") || catLower.includes("visa") || catLower.includes("certificate")) {
+      setTimingSuggestion({
+        text: "🔔 Suggested timing for Insurance/Visa: remind 30 days before",
+        rules: ["one_month_before", "on_expiry"]
+      });
+    } else if (catLower.includes("pay") || catLower.includes("subscription") || catLower.includes("due") || catLower.includes("bill")) {
+      setTimingSuggestion({
+        text: "🔔 Suggested timing for Payments: remind 7 days before",
+        rules: ["one_week_before", "on_expiry"]
+      });
+    } else if (catLower.includes("amc") || catLower.includes("license") || catLower.includes("servicing") || catLower.includes("equipment")) {
+      setTimingSuggestion({
+        text: "🔔 Suggested timing for AMC/License: remind 30 days before",
+        rules: ["one_month_before", "on_expiry"]
+      });
+    } else {
+      setTimingSuggestion(null);
+    }
+  }, [category]);
+
   // Load values if editing
   useEffect(() => {
     if (reminder) {
@@ -61,8 +258,8 @@ export default function ReminderForm({
       setStatus(reminder.status || "Active");
       setNotes(reminder.notes || "");
       setRenewalPeriodOverride(reminder.renewalPeriodOverride || "");
-      setCustomerName(reminder.customerName || "");
-      setCustomerEmail(reminder.customerEmail || "");
+      setCustomerName(reminder.customer_name || "");
+      setCustomerEmail(reminder.customer_email || "");
       if (reminder.rulesOverride) {
         setUseGlobalRules(false);
         setRulesOverride(reminder.rulesOverride);
@@ -100,6 +297,114 @@ export default function ReminderForm({
       } else if (status === "Expired") {
         setStatus("Active");
       }
+    }
+  };
+
+  // Voice recording functions
+  const startRecording = async () => {
+    try {
+      setMicrophoneError(null);
+      const stream = await navigator.mediaDevices.getUserMedia({ audio: true });
+      const recorder = new MediaRecorder(stream);
+      const chunks: Blob[] = [];
+
+      recorder.ondataavailable = (e) => {
+        if (e.data && e.data.size > 0) {
+          chunks.push(e.data);
+        }
+      };
+
+      recorder.onstop = () => {
+        const blob = new Blob(chunks, { type: "audio/webm" });
+        const url = URL.createObjectURL(blob);
+        setAudioBlob(blob);
+        setAudioUrl(url);
+        
+        // Stop all tracks to release microphone
+        stream.getTracks().forEach(track => track.stop());
+      };
+
+      recorder.start();
+      setMediaRecorder(recorder);
+      setIsRecording(true);
+      setAudioUrl(null);
+      setAudioBlob(null);
+      setVoiceReviewText(null);
+    } catch (err: any) {
+      console.error("Microphone access failed:", err);
+      setMicrophoneError("Microphone access failed. Please ensure permissions are enabled.");
+    }
+  };
+
+  const stopRecording = () => {
+    if (mediaRecorder && isRecording) {
+      mediaRecorder.stop();
+      setIsRecording(false);
+    }
+  };
+
+  const handleDiscardVoice = () => {
+    setAudioUrl(null);
+    setAudioBlob(null);
+    setVoiceReviewText(null);
+    setMediaRecorder(null);
+  };
+
+  const handleConfirmAndTranscribe = async () => {
+    if (!audioBlob) return;
+    setIsTranscribing(true);
+    setMicrophoneError(null);
+    try {
+      // Read blob as base64
+      const reader = new FileReader();
+      const base64Promise = new Promise<string>((resolve, reject) => {
+        reader.onload = () => {
+          const result = reader.result as string;
+          const base64Data = result.split(",")[1];
+          resolve(base64Data);
+        };
+        reader.onerror = (err) => reject(err);
+      });
+      reader.readAsDataURL(audioBlob);
+      const fileBase64 = await base64Promise;
+
+      const response = await fetch("/api/ai/transcribe-voice", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          fileBase64,
+          mimeType: "audio/webm"
+        })
+      });
+
+      if (!response.ok) {
+        const errData = await response.json();
+        throw new Error(errData.error || "Transcription failed");
+      }
+
+      const data = await response.json();
+      if (data.text && data.text.trim()) {
+        setVoiceReviewText(data.text.trim());
+      } else {
+        const today = new Date().toLocaleDateString("en-US", { day: 'numeric', month: 'short', year: 'numeric' });
+        setVoiceReviewText(`[Voice note recorded on ${today} - transcription was silent or empty]`);
+      }
+    } catch (err: any) {
+      console.error("Transcription error:", err);
+      const today = new Date().toLocaleDateString("en-US", { day: 'numeric', month: 'short', year: 'numeric' });
+      setVoiceReviewText(`[Voice note recorded on ${today} - transcription unavailable: ${err.message || "Error"}]`);
+    } finally {
+      setIsTranscribing(false);
+    }
+  };
+
+  const handleAcceptTranscription = () => {
+    if (voiceReviewText) {
+      const divider = notes ? "\n" : "";
+      setNotes(notes + divider + voiceReviewText);
+      setAudioUrl(null);
+      setAudioBlob(null);
+      setVoiceReviewText(null);
     }
   };
 
@@ -176,8 +481,8 @@ export default function ReminderForm({
       notes: notes.trim(),
       rulesOverride: useGlobalRules ? undefined : rulesOverride,
       renewalPeriodOverride: renewalPeriodOverride.trim() || undefined,
-      customerName: customerName.trim() || undefined,
-      customerEmail: customerEmail.trim() || undefined
+      customer_name: customerName.trim() || undefined,
+      customer_email: customerEmail.trim() || undefined
     };
 
     try {
@@ -216,10 +521,48 @@ export default function ReminderForm({
       )}
 
       <form onSubmit={handleSubmit} className="space-y-5">
+        {/* AI Document Scanner box */}
+        {!reminder && (
+          <div className="p-4 bg-indigo-50/40 border border-indigo-100 rounded-xl space-y-2 mb-2">
+            <div className="flex items-center justify-between">
+              <div className="flex items-center gap-1.5 text-indigo-900 font-bold text-xs uppercase tracking-wider">
+                <Sparkles className="w-4.5 h-4.5 text-indigo-500 animate-pulse" />
+                AI Document Scanner (Autofill)
+              </div>
+              {isUploading && (
+                <span className="flex items-center gap-1 text-[11px] text-indigo-600 font-medium">
+                  <Loader2 className="w-3.5 h-3.5 animate-spin" /> Analyzing...
+                </span>
+              )}
+            </div>
+            <p className="text-xs text-gray-500">
+              Upload a PDF or Photo of the agreement, policy, license, or visa, and Gemini will automatically detect and populate the fields for you to review.
+            </p>
+            <div className="relative mt-2">
+              <label className="flex items-center justify-center gap-2 px-4 py-2.5 bg-white hover:bg-indigo-50/50 border border-indigo-200 hover:border-indigo-300 text-indigo-700 hover:text-indigo-800 text-xs font-semibold rounded-lg cursor-pointer transition-all shadow-2xs">
+                <UploadCloud className="w-4 h-4 text-indigo-500" />
+                {isUploading ? "Reading Document..." : "Choose PDF or Image"}
+                <input
+                  type="file"
+                  accept="application/pdf,image/*"
+                  onChange={handleFileUpload}
+                  disabled={isUploading}
+                  className="hidden"
+                />
+              </label>
+            </div>
+          </div>
+        )}
+
         {/* Item name */}
         <div>
-          <label className="block text-xs font-semibold uppercase tracking-wider text-gray-500 mb-1.5">
-            Obligation / Item Name *
+          <label className="block text-xs font-semibold uppercase tracking-wider text-gray-500 mb-1.5 flex items-center justify-between">
+            <span>Obligation / Item Name *</span>
+            {aiSuggestions.itemName && (
+              <span className="inline-flex items-center gap-1 px-1.5 py-0.5 bg-amber-50 text-amber-700 border border-amber-100 rounded text-[10px] font-bold uppercase tracking-wider animate-pulse">
+                <Sparkles className="w-2.5 h-2.5" /> AI-suggested — please verify
+              </span>
+            )}
           </label>
           <input
             type="text"
@@ -234,8 +577,13 @@ export default function ReminderForm({
         {/* Category & Custom Category Selection */}
         <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
           <div>
-            <label className="block text-xs font-semibold uppercase tracking-wider text-gray-500 mb-1.5">
-              Category *
+            <label className="block text-xs font-semibold uppercase tracking-wider text-gray-500 mb-1.5 flex items-center justify-between">
+              <span>Category *</span>
+              {aiSuggestions.category && (
+                <span className="inline-flex items-center gap-1 px-1.5 py-0.5 bg-amber-50 text-amber-700 border border-amber-100 rounded text-[10px] font-bold uppercase tracking-wider animate-pulse">
+                  <Sparkles className="w-2.5 h-2.5" /> AI-suggested — please verify
+                </span>
+              )}
             </label>
             <div className="flex gap-2">
               <select
@@ -258,6 +606,21 @@ export default function ReminderForm({
                 <Plus className="w-4 h-4" />
               </button>
             </div>
+            {smartCategorySuggestion && (
+              <div className="mt-1.5 flex items-center gap-1.5 text-[11px] text-indigo-700 bg-indigo-50/50 p-1.5 rounded-lg border border-indigo-100/50">
+                <span>💡 Best match:</span>
+                <button
+                  type="button"
+                  onClick={() => {
+                    setCategory(smartCategorySuggestion);
+                    setSmartCategorySuggestion(null);
+                  }}
+                  className="underline hover:text-indigo-900 font-bold cursor-pointer"
+                >
+                  Set to {smartCategorySuggestion}
+                </button>
+              </div>
+            )}
           </div>
 
           {/* Status */}
@@ -377,8 +740,13 @@ export default function ReminderForm({
         {/* Expiry and Renewal Date */}
         <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
           <div>
-            <label className="block text-xs font-semibold uppercase tracking-wider text-gray-500 mb-1.5">
-              Expiry / Due Date *
+            <label className="block text-xs font-semibold uppercase tracking-wider text-gray-500 mb-1.5 flex items-center justify-between">
+              <span>Expiry / Due Date *</span>
+              {aiSuggestions.expiryDate && (
+                <span className="inline-flex items-center gap-1 px-1.5 py-0.5 bg-amber-50 text-amber-700 border border-amber-100 rounded text-[10px] font-bold uppercase tracking-wider animate-pulse">
+                  <Sparkles className="w-2.5 h-2.5" /> AI-suggested — please verify
+                </span>
+              )}
             </label>
             <div className="relative">
               <Calendar className="absolute left-3 top-2.5 w-4 h-4 text-gray-400 pointer-events-none" />
@@ -438,6 +806,22 @@ export default function ReminderForm({
             </div>
           </div>
 
+          {timingSuggestion && (
+            <div className="p-2.5 bg-blue-50/50 border border-blue-100/50 rounded-lg text-[11px] text-blue-800 flex items-center justify-between gap-2">
+              <span className="font-medium">{timingSuggestion.text}</span>
+              <button
+                type="button"
+                onClick={() => {
+                  setUseGlobalRules(false);
+                  setRulesOverride(timingSuggestion.rules);
+                }}
+                className="px-2 py-1 bg-blue-600 hover:bg-blue-700 text-white text-[10px] font-bold rounded-md transition-colors uppercase tracking-wide cursor-pointer shrink-0"
+              >
+                Apply Suggestion
+              </button>
+            </div>
+          )}
+
           {/* Use Global Rules Switcher */}
           <div className="flex items-center gap-2 border-b border-gray-100 pb-2 mb-2">
             <input
@@ -478,15 +862,120 @@ export default function ReminderForm({
 
         {/* Notes */}
         <div>
-          <label className="block text-xs font-semibold uppercase tracking-wider text-gray-500 mb-1.5">
-            Notes / Vendor Details
-          </label>
+          <div className="flex items-center justify-between mb-1.5">
+            <label className="block text-xs font-semibold uppercase tracking-wider text-gray-500">
+              Notes / Vendor Details
+            </label>
+            
+            {/* Voice Note Recording Button */}
+            <div className="flex items-center gap-2">
+              {!isRecording && !audioUrl && !voiceReviewText && !isTranscribing && (
+                <button
+                  type="button"
+                  onClick={startRecording}
+                  className="flex items-center gap-1 px-2.5 py-1 bg-indigo-50 hover:bg-indigo-100 text-indigo-700 text-xs font-semibold rounded-lg border border-indigo-100 transition-colors cursor-pointer"
+                >
+                  <Sparkles className="w-3.5 h-3.5 text-indigo-500" />
+                  Add Voice Note
+                </button>
+              )}
+            </div>
+          </div>
+
+          {microphoneError && (
+            <p className="text-[11px] text-red-600 font-medium mb-2">{microphoneError}</p>
+          )}
+
+          {/* Active Recording State Overlay */}
+          {isRecording && (
+            <div className="p-3 bg-red-50 border border-red-100 rounded-lg flex items-center justify-between gap-3 mb-2 animate-pulse">
+              <div className="flex items-center gap-2 text-xs font-semibold text-red-700">
+                <span className="w-2 h-2 rounded-full bg-red-600 animate-ping" />
+                Recording voice note... Speak clearly.
+              </div>
+              <button
+                type="button"
+                onClick={stopRecording}
+                className="px-2.5 py-1 bg-red-600 hover:bg-red-700 text-white text-xs font-bold rounded-md cursor-pointer transition-colors"
+              >
+                Stop Recording
+              </button>
+            </div>
+          )}
+
+          {/* Review Audio & Transcribe Button */}
+          {audioUrl && !isTranscribing && !voiceReviewText && (
+            <div className="p-3 bg-indigo-50/50 border border-indigo-100 rounded-lg flex flex-col sm:flex-row sm:items-center justify-between gap-3 mb-2">
+              <div className="flex flex-col gap-1">
+                <span className="text-xs font-semibold text-indigo-900">Voice note recorded</span>
+                <audio src={audioUrl} controls className="h-8 max-w-full" />
+              </div>
+              <div className="flex items-center gap-2 self-end sm:self-auto">
+                <button
+                  type="button"
+                  onClick={handleDiscardVoice}
+                  className="px-2.5 py-1 bg-white hover:bg-gray-50 border border-gray-200 text-gray-700 text-xs font-semibold rounded-md cursor-pointer"
+                >
+                  Discard
+                </button>
+                <button
+                  type="button"
+                  onClick={handleConfirmAndTranscribe}
+                  className="flex items-center gap-1 px-3 py-1 bg-indigo-600 hover:bg-indigo-700 text-white text-xs font-semibold rounded-md cursor-pointer"
+                >
+                  <Sparkles className="w-3.5 h-3.5" />
+                  Transcribe Voice Note
+                </button>
+              </div>
+            </div>
+          )}
+
+          {/* Transcribing Loader */}
+          {isTranscribing && (
+            <div className="p-3 bg-indigo-50 border border-indigo-100 rounded-lg flex items-center gap-2.5 mb-2 text-xs text-indigo-700 font-medium">
+              <Loader2 className="w-4 h-4 animate-spin text-indigo-600" />
+              Transcribing audio with Gemini model, please wait...
+            </div>
+          )}
+
+          {/* Review Transcription Text */}
+          {voiceReviewText && (
+            <div className="p-3.5 bg-amber-50/60 border border-amber-200 rounded-lg space-y-2 mb-2">
+              <div className="flex items-center gap-1.5 text-amber-900 font-bold text-[10px] uppercase tracking-wider">
+                <Sparkles className="w-3.5 h-3.5 text-amber-500 animate-pulse" />
+                Transcribed from voice note — please review
+              </div>
+              <textarea
+                value={voiceReviewText}
+                onChange={(e) => setVoiceReviewText(e.target.value)}
+                className="w-full p-2 bg-white border border-amber-200 rounded-lg text-xs focus:outline-none focus:ring-1 focus:ring-amber-400 text-gray-800"
+                rows={2}
+              />
+              <div className="flex gap-2 justify-end">
+                <button
+                  type="button"
+                  onClick={handleDiscardVoice}
+                  className="px-2.5 py-1 bg-white hover:bg-gray-50 border border-gray-200 text-gray-700 text-xs font-semibold rounded-md cursor-pointer"
+                >
+                  Discard
+                </button>
+                <button
+                  type="button"
+                  onClick={handleAcceptTranscription}
+                  className="px-2.5 py-1 bg-amber-600 hover:bg-amber-700 text-white text-xs font-bold rounded-md cursor-pointer"
+                >
+                  Append to Notes
+                </button>
+              </div>
+            </div>
+          )}
+
           <textarea
             placeholder="e.g. Quote #QT-820, Allianz Policy details, Service Engineer contact number, website login portal link"
             rows={3}
             value={notes}
             onChange={(e) => setNotes(e.target.value)}
-            className="w-full px-3 py-2 border border-gray-200 rounded-lg focus:outline-none focus:ring-1 focus:ring-blue-500 focus:border-blue-500 text-sm placeholder:text-gray-400"
+            className="w-full px-3 py-2 border border-gray-200 rounded-lg focus:outline-none focus:ring-1 focus:ring-blue-500 focus:border-blue-500 text-sm placeholder:text-gray-400 text-gray-800"
           />
         </div>
 

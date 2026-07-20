@@ -3,6 +3,7 @@ import path from "path";
 import fs from "fs";
 import { createServer as createViteServer } from "vite";
 import dotenv from "dotenv";
+import { GoogleGenAI, Type } from "@google/genai";
 
 // Load environment variables
 dotenv.config();
@@ -209,8 +210,8 @@ async function ensureTables() {
             "renewalPeriodOverride" text,
             "acknowledged" boolean DEFAULT false,
             "acknowledged_at" text DEFAULT null,
-            "customerName" text DEFAULT null,
-            "customerEmail" text DEFAULT null
+            "customer_name" text DEFAULT null,
+            "customer_email" text DEFAULT null
           );
         `);
 
@@ -222,10 +223,10 @@ async function ensureTables() {
           ALTER TABLE reminders ADD COLUMN IF NOT EXISTS "acknowledged_at" text DEFAULT null;
         `);
         await client.query(`
-          ALTER TABLE reminders ADD COLUMN IF NOT EXISTS "customerName" text DEFAULT null;
+          ALTER TABLE reminders ADD COLUMN IF NOT EXISTS "customer_name" text DEFAULT null;
         `);
         await client.query(`
-          ALTER TABLE reminders ADD COLUMN IF NOT EXISTS "customerEmail" text DEFAULT null;
+          ALTER TABLE reminders ADD COLUMN IF NOT EXISTS "customer_email" text DEFAULT null;
         `);
 
         // 3. Create LOGS table
@@ -373,8 +374,8 @@ async function saveReminder(reminder: any, mode: 'insert' | 'update' | 'upsert' 
         renewalPeriodOverride: reminder.renewalPeriodOverride || null,
         acknowledged: reminder.acknowledged === true || reminder.acknowledged === 'true',
         acknowledged_at: reminder.acknowledged_at || reminder.acknowledgedAt || null,
-        customerName: reminder.customerName || null,
-        customerEmail: reminder.customerEmail || null
+        customer_name: reminder.customer_name || reminder.customerName || null,
+        customer_email: reminder.customer_email || reminder.customerEmail || null
       };
 
       let query;
@@ -429,7 +430,7 @@ async function saveReminder(reminder: any, mode: 'insert' | 'update' | 'upsert' 
         id, "itemName", category, "responsibleName", "responsibleEmail", 
         "expiryDate", "renewalDate", status, notes, "rulesOverride", 
         "renewalHistory", "renewalPeriodOverride", acknowledged, "acknowledged_at",
-        "customerName", "customerEmail"
+        "customer_name", "customer_email"
       )
       VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16)
       ON CONFLICT (id) DO UPDATE SET
@@ -446,8 +447,8 @@ async function saveReminder(reminder: any, mode: 'insert' | 'update' | 'upsert' 
         "renewalPeriodOverride" = EXCLUDED."renewalPeriodOverride",
         acknowledged = EXCLUDED.acknowledged,
         "acknowledged_at" = EXCLUDED."acknowledged_at",
-        "customerName" = EXCLUDED."customerName",
-        "customerEmail" = EXCLUDED."customerEmail";
+        "customer_name" = EXCLUDED."customer_name",
+        "customer_email" = EXCLUDED."customer_email";
     `, [
       reminder.id,
       reminder.itemName,
@@ -463,8 +464,8 @@ async function saveReminder(reminder: any, mode: 'insert' | 'update' | 'upsert' 
       reminder.renewalPeriodOverride || null,
       reminder.acknowledged === true || reminder.acknowledged === 'true',
       reminder.acknowledged_at || reminder.acknowledgedAt || null,
-      reminder.customerName || null,
-      reminder.customerEmail || null
+      reminder.customer_name || reminder.customerName || null,
+      reminder.customer_email || reminder.customerEmail || null
     ]), 2500);
   } catch (err) {
     console.log("[PostgreSQL Status] Saving reminder exception: fallback activated (Info: " + (err instanceof Error ? err.message : String(err)) + ")");
@@ -1023,10 +1024,10 @@ async function checkAndSendReminders(targetDateStr: string, triggerEmails = true
       }
     ];
 
-    if (reminder.customerEmail && reminder.customerEmail.trim()) {
+    if ((reminder.customer_email || reminder.customerEmail) && (reminder.customer_email || reminder.customerEmail).trim()) {
       recipients.push({
-        name: reminder.customerName || "Customer",
-        email: reminder.customerEmail.trim(),
+        name: reminder.customer_name || reminder.customerName || "Customer",
+        email: (reminder.customer_email || reminder.customerEmail).trim(),
         isCustomer: true
       });
     }
@@ -1214,8 +1215,9 @@ async function checkAndSendReminders(targetDateStr: string, triggerEmails = true
     sent: newLogs.length,
     matches: matches.map(m => {
       let rec = m.reminder.responsibleEmail;
-      if (m.reminder.customerEmail && m.reminder.customerEmail.trim()) {
-        rec += ` & ${m.reminder.customerEmail.trim()}`;
+      const custEmail = m.reminder.customer_email || m.reminder.customerEmail;
+      if (custEmail && custEmail.trim()) {
+        rec += ` & ${custEmail.trim()}`;
       }
       return {
         itemName: m.reminder.itemName,
@@ -1840,6 +1842,353 @@ app.post("/api/logs/clear", async (req, res) => {
   }
 });
 
+// AI Feature 1: Document Upload + Autofill
+app.post("/api/ai/analyze-document", async (req, res) => {
+  try {
+    const { fileBase64, mimeType } = req.body;
+    if (!fileBase64 || !mimeType) {
+      return res.status(400).json({ error: "Missing fileBase64 or mimeType" });
+    }
+
+    const geminiApiKey = process.env.GEMINI_API_KEY;
+    if (!geminiApiKey) {
+      return res.status(400).json({ error: "Gemini API key is not configured in environment secrets." });
+    }
+
+    const ai = new GoogleGenAI({
+      apiKey: geminiApiKey,
+      httpOptions: {
+        headers: {
+          'User-Agent': 'aistudio-build',
+        }
+      }
+    });
+
+    const config = await getConfig();
+    const categories = config.categories || [
+      "Payment Due",
+      "Insurance",
+      "Company Asset",
+      "Employee Visa",
+      "Software License",
+      "AMC",
+      "Compliance Certificate",
+      "Vehicle Insurance",
+      "Equipment Servicing",
+      "Subscription"
+    ];
+
+    const prompt = `Analyze this uploaded document and extract details to auto-fill an Obligation Tracking Form.
+Please find:
+1. itemName: The official title, name, or description of the contract, policy, license, visa, or AMC (e.g. "Allianz General Liability Insurance").
+2. category: Map this document to one of these predefined categories ONLY. Choose the closest one:
+   ${categories.map(c => `   - "${c}"`).join("\n")}
+3. expiryDate: The official expiration date, renewal date, or end-of-term date of this contract/document. Format it strictly as YYYY-MM-DD.
+
+If you are not highly confident about a field, return null for it. Do not guess.`;
+
+    const filePart = {
+      inlineData: {
+        mimeType: mimeType,
+        data: fileBase64,
+      },
+    };
+
+    const response = await ai.models.generateContent({
+      model: "gemini-3.5-flash",
+      contents: [filePart, prompt],
+      config: {
+        responseMimeType: "application/json",
+        responseSchema: {
+          type: Type.OBJECT,
+          properties: {
+            itemName: {
+              type: Type.STRING,
+              nullable: true,
+              description: "The name/title of the obligation or document, or null if unknown/not found."
+            },
+            category: {
+              type: Type.STRING,
+              nullable: true,
+              description: "Must be one of: " + categories.join(", ") + ", or null if unknown/not found."
+            },
+            expiryDate: {
+              type: Type.STRING,
+              nullable: true,
+              description: "The expiration or due date in YYYY-MM-DD format, or null if unknown/not found."
+            }
+          },
+          required: ["itemName", "category", "expiryDate"]
+        },
+      },
+    });
+
+    const resultText = response.text || "{}";
+    res.json(JSON.parse(resultText));
+  } catch (err: any) {
+    console.error("[AI Document Upload Error]:", err);
+    res.status(500).json({ error: err.message || String(err) });
+  }
+});
+
+// AI Feature 3: Ask Chatbot Panel
+app.post("/api/ai/ask", async (req, res) => {
+  try {
+    const { question, history } = req.body;
+    if (!question) {
+      return res.status(400).json({ error: "Missing question" });
+    }
+
+    const geminiApiKey = process.env.GEMINI_API_KEY;
+    if (!geminiApiKey) {
+      return res.status(400).json({ error: "Gemini API key is not configured in environment secrets." });
+    }
+
+    const ai = new GoogleGenAI({
+      apiKey: geminiApiKey,
+      httpOptions: {
+        headers: {
+          'User-Agent': 'aistudio-build',
+        }
+      }
+    });
+
+    let reminders: any[] = [];
+    const s = getSupabaseClient();
+    if (s && isSupabaseAvailable()) {
+      try {
+        const { data, error } = await runWithTimeout(s.from('reminders').select('*'), 5000);
+        if (error) {
+          console.error("[Supabase Fetch Error inside Chatbot Ask]:", error);
+          return res.status(500).json({ error: `Couldn't load reminder data: ${error.message || JSON.stringify(error)}` });
+        }
+        reminders = data || [];
+      } catch (err: any) {
+        console.error("[Supabase Fetch Exception inside Chatbot Ask]:", err);
+        return res.status(500).json({ error: `Couldn't load reminder data: ${err.message || String(err)}` });
+      }
+    } else {
+      try {
+        reminders = await getReminders();
+      } catch (err: any) {
+        console.error("[Fallback Fetch Exception inside Chatbot Ask]:", err);
+        return res.status(500).json({ error: `Couldn't load reminder data: ${err.message || String(err)}` });
+      }
+    }
+
+    const config = await getConfig();
+
+    // Limit payload size by picking only necessary fields for AI reasoning
+    const simplifiedReminders = reminders.map((r: any) => ({
+      itemName: r.itemName || "",
+      category: r.category || "",
+      responsibleName: r.responsibleName || "",
+      responsibleEmail: r.responsibleEmail || "",
+      expiryDate: r.expiryDate || "",
+      renewalDate: r.renewalDate || "",
+      status: r.status || "Active",
+      notes: r.notes || "",
+      acknowledged: r.acknowledged || false,
+      customer_name: r.customer_name || r.customerName || "",
+      customer_email: r.customer_email || r.customerEmail || ""
+    }));
+
+    const systemInstruction = `You are the Expiry Manager AI Assistant, an expert chatbot designed to help users query, analyze, and understand their obligation/reminder tracking database in plain English.
+Today's local date is: ${new Date().toISOString().split("T")[0]}.
+
+CRITICAL RULES:
+1. GROUND EVERY ANSWER: You MUST answer the user's question using ONLY the actual data from the active reminders JSON array provided below. Under no circumstances should you invent, hallucinate, guess, or extrapolate dates, names, counts, or emails.
+2. EMPTY DATASET: If there are no reminders/obligations in the dataset yet, say so clearly and politely (e.g. "There are currently no obligations tracked in the database. Please add a new reminder or import an Excel file so I can assist you!").
+3. LIST LIMITATION (MAX 5): For list-type answers, show a short, readable list of up to 5 items. If there are more than 5 matching items, show the top 5 and explicitly append a note like: "and [X] more — check the dashboard table for the full list."
+4. VAGUE QUESTIONS: If a question is vague (e.g., "how are things looking?", "any updates?", "what's the status?"), do NOT refuse. Instead, provide a helpful summary overview from the data (e.g., count of overdue items, items expiring this week, and overall database health status).
+5. OUT OF SCOPE: If a question is genuinely unrelated to reminders, obligations, expiry tracking, or the app's configuration (e.g., "what's the weather", "tell me a joke", "who is the president"), politely explain that you can only help with tracking obligations, expiry dates, or vendor details within this application, and briefly suggest what the user can ask you.
+6. PERSISTENT ACCURACY: Keep responses short, in plain language, and use professional, clean Markdown formatting (bullet points, bold highlights, or simple tables). Keep explanations concise (no long paragraphs).
+
+Active Configuration:
+- Categories: ${JSON.stringify(config.categories)}
+- Default Notification Rules: ${JSON.stringify(config.defaultRules)}
+
+Active Reminders Dataset:
+${JSON.stringify(simplifiedReminders, null, 2)}`;
+
+    let formattedHistory: any[] = [];
+    if (history && Array.isArray(history)) {
+      formattedHistory = history.map((h: any) => ({
+        role: h.role === "user" ? "user" : "model",
+        parts: [{ text: h.message || h.text || "" }]
+      }));
+    }
+
+    const activeChat = ai.chats.create({
+      model: "gemini-3.5-flash",
+      config: {
+        systemInstruction,
+      },
+      history: formattedHistory
+    });
+
+    const response = await activeChat.sendMessage({ message: question });
+    res.json({ answer: response.text });
+  } catch (err: any) {
+    console.error("[AI Chatbot Error]:", err);
+    res.status(500).json({ error: err.message || String(err) });
+  }
+});
+
+// AI Feature 4: Voice Note Transcription
+app.post("/api/ai/transcribe-voice", async (req, res) => {
+  try {
+    const { fileBase64, mimeType } = req.body;
+    if (!fileBase64 || !mimeType) {
+      return res.status(400).json({ error: "Missing fileBase64 or mimeType" });
+    }
+
+    const geminiApiKey = process.env.GEMINI_API_KEY;
+    if (!geminiApiKey) {
+      return res.status(400).json({ error: "Gemini API key is not configured in environment secrets." });
+    }
+
+    const ai = new GoogleGenAI({
+      apiKey: geminiApiKey,
+      httpOptions: {
+        headers: {
+          'User-Agent': 'aistudio-build',
+        }
+      }
+    });
+
+    const filePart = {
+      inlineData: {
+        mimeType: mimeType,
+        data: fileBase64,
+      },
+    };
+
+    const prompt = "Please transcribe this spoken voice note recording accurately. Provide only the plain text transcription. Do not include any introductory text, prefixing labels, or explanations. If the audio is silent or unintelligible, just return an empty string.";
+
+    const response = await ai.models.generateContent({
+      model: "gemini-3.5-flash",
+      contents: [filePart, prompt]
+    });
+
+    const text = response.text || "";
+    res.json({ text: text.trim() });
+  } catch (err: any) {
+    console.error("[AI Voice Transcription Error]:", err);
+    res.status(500).json({ error: err.message || String(err) });
+  }
+});
+
+// AI Feature 5: Parse Command (Voice or Text Intent Extraction)
+app.post("/api/ai/parse-command", async (req, res) => {
+  try {
+    const { text } = req.body;
+    if (!text) {
+      return res.status(400).json({ error: "Missing text" });
+    }
+
+    const geminiApiKey = process.env.GEMINI_API_KEY;
+    if (!geminiApiKey) {
+      return res.status(400).json({ error: "Gemini API key is not configured in environment secrets." });
+    }
+
+    const ai = new GoogleGenAI({
+      apiKey: geminiApiKey,
+      httpOptions: {
+        headers: {
+          'User-Agent': 'aistudio-build',
+        }
+      }
+    });
+
+    const prompt = `Analyze this user's text (transcribed from voice or typed in chatbot input): "${text}"
+
+Determine if it matches one of these structured commands:
+1. "create": Creating a new obligation/reminder. For example: "Create a new reminder named Fire Insurance, category Insurance, expiring on next Monday". Required fields are itemName and expiryDate. If these are missing or incomplete, list them in missingFields and ask for clarification in followUpQuestion.
+2. "renew": Renewing an existing reminder. For example: "Renew General Liability Insurance" or "renew Building Lease".
+3. "search": Searching or filtering the reminders database. For example: "Show me all overdue insurance reminders" or "search for Pranav K's reminders".
+4. "update_status": Marking a reminder as acknowledged. For example: "Mark fire alarm check as acknowledged" or "Acknowledge the elevator maintenance reminder".
+
+If the user's intent doesn't match any of the above (e.g. it is a question about a reminder like "what is overdue?" or "how are things looking?" or a general conversational query), classify commandType as "question".
+
+Today's local date is: ${new Date().toISOString().split("T")[0]}. Use this to resolve relative dates (like "next Monday", "in 3 weeks", "by end of this month") into exact YYYY-MM-DD strings.
+
+For "create" commands:
+- responsibleName should default to "Pranav K" if not specified.
+- responsibleEmail should default to "pranavk.aconsultancy@gmail.com" if responsibleName is "Pranav K" and not specified, or be extracted if mentioned.
+- category: match or choose one of the closest categories if mentioned.
+- itemName: extract the exact or clean name of the reminder.
+- notes: include any extra description.
+- customer_name: extract the customer or client name if mentioned (e.g., if they say "for customer ACME Corp" or "client Neemrana Kulkarni").
+- customer_email: extract any customer or client email address if mentioned.
+
+For "search" commands, extract any filters:
+- category: if they filter by a specific category (e.g. "insurance")
+- status: if they filter by status. Classify as "Overdue" (for overdue/expired), "Expiring Soon" (for expiring soon/due soon), or "Active" (for healthy/active).
+- text: any name or search text (e.g., "insurance", "Pranav", etc.).
+
+If required fields for a command are missing, specify them in the missingFields array and provide a short, natural, and friendly followUpQuestion asking for them. Do not guess dates if none were provided or implied!`;
+
+    const responseSchema = {
+      type: Type.OBJECT,
+      properties: {
+        commandType: {
+          type: Type.STRING,
+          description: "One of: 'create', 'renew', 'search', 'update_status', 'question'"
+        },
+        extractedData: {
+          type: Type.OBJECT,
+          description: "Data extracted for the command if applicable",
+          properties: {
+            itemName: { type: Type.STRING },
+            category: { type: Type.STRING },
+            expiryDate: { type: Type.STRING, description: "Expiry date in YYYY-MM-DD format" },
+            responsibleName: { type: Type.STRING },
+            responsibleEmail: { type: Type.STRING },
+            notes: { type: Type.STRING },
+            customer_name: { type: Type.STRING, description: "Customer name if mentioned" },
+            customer_email: { type: Type.STRING, description: "Customer email if mentioned" }
+          }
+        },
+        searchFilters: {
+          type: Type.OBJECT,
+          description: "Filters if commandType is 'search'",
+          properties: {
+            text: { type: Type.STRING },
+            category: { type: Type.STRING },
+            status: { type: Type.STRING, description: "One of: 'Overdue', 'Expiring Soon', 'Active', or empty" }
+          }
+        },
+        missingFields: {
+          type: Type.ARRAY,
+          items: { type: Type.STRING },
+          description: "Required fields that are missing (e.g., ['expiryDate', 'itemName'])"
+        },
+        followUpQuestion: {
+          type: Type.STRING,
+          description: "Short friendly question if some required details are missing"
+        }
+      },
+      required: ["commandType"]
+    };
+
+    const response = await ai.models.generateContent({
+      model: "gemini-3.5-flash",
+      contents: prompt,
+      config: {
+        responseMimeType: "application/json",
+        responseSchema
+      }
+    });
+
+    const parsedResult = JSON.parse(response.text || "{}");
+    res.json(parsedResult);
+  } catch (err: any) {
+    console.error("[AI Parse Command Error]:", err);
+    res.status(500).json({ error: err.message || String(err) });
+  }
+});
+
 // 9.5 POST Send Test Email
 app.post("/api/send-test-email", async (req, res) => {
   const { email } = req.body;
@@ -2077,6 +2426,14 @@ app.use((err: any, req: any, res: any, next: any) => {
 
 // Integrate Vite middleware for development or Static Assets for production
 async function startServer() {
+  // Ensure database tables and schema are bootstrapped on startup
+  try {
+    console.log("[Startup] Bootstrapping database schema...");
+    await ensureTables();
+  } catch (err) {
+    console.error("[Startup] Database bootstrapping failed:", err);
+  }
+
   if (process.env.NODE_ENV !== "production") {
     const vite = await createViteServer({
       server: { middlewareMode: true },

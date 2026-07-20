@@ -20,9 +20,12 @@ import {
   BellRing,
   ExternalLink,
   User,
-  Info
+  Info,
+  Printer
 } from "lucide-react";
 import { Reminder, GlobalConfig } from "../types";
+import SyncAILogo from "./SyncAILogo";
+import { jsPDF } from "jspdf";
 
 interface DashboardProps {
   reminders: Reminder[];
@@ -89,6 +92,22 @@ export default function Dashboard({
   const [selectedCategory, setSelectedCategory] = useState("");
   const [selectedPerson, setSelectedPerson] = useState("");
   const [selectedStatus, setSelectedStatus] = useState("");
+
+  useEffect(() => {
+    const handleApplyFilter = (e: Event) => {
+      const customEvent = e as CustomEvent;
+      if (!customEvent.detail) return;
+      const { search, category, status, person } = customEvent.detail;
+      if (search !== undefined) setSearchTerm(search);
+      if (category !== undefined) setSelectedCategory(category);
+      if (status !== undefined) setSelectedStatus(status);
+      if (person !== undefined) setSelectedPerson(person);
+    };
+    window.addEventListener("apply-dashboard-filter", handleApplyFilter);
+    return () => {
+      window.removeEventListener("apply-dashboard-filter", handleApplyFilter);
+    };
+  }, []);
   
   // Sorting States
   const [sortField, setSortField] = useState<SortField>("expiryDate");
@@ -116,6 +135,11 @@ export default function Dashboard({
 
   // "+ Add New Reminder" Quick Modal State
   const [isAddModalOpen, setIsAddModalOpen] = useState(false);
+
+  // "Export PDF Report" Modal State
+  const [isReportOpen, setIsReportOpen] = useState(false);
+  const [isGeneratingPdf, setIsGeneratingPdf] = useState(false);
+  const [pdfError, setPdfError] = useState<string | null>(null);
   const [newName, setNewName] = useState("");
   const [newCategory, setNewCategory] = useState("");
   const [newPerson, setNewPerson] = useState("Pranav K");
@@ -155,6 +179,416 @@ export default function Dashboard({
     expiry.setHours(0, 0, 0, 0);
     const diffTime = expiry.getTime() - today.getTime();
     return Math.round(diffTime / (1000 * 60 * 60 * 24));
+  };
+
+  // Programmatic enterprise PDF report download via jsPDF
+  const handleDownloadPDF = async () => {
+    setIsGeneratingPdf(true);
+    setPdfError(null);
+    try {
+      const doc = new jsPDF({
+        orientation: "portrait",
+        unit: "mm",
+        format: "a4",
+      });
+
+      // Total Pages placeholder string we'll replace later
+      const TOTAL_PAGES_PLACEHOLDER = "___";
+
+      const drawHeader = () => {
+        // --- LOGO & HEADER ---
+        const logoX = 15;
+        const logoY = 13;
+        
+        // Connection lines (Teal/Blue)
+        doc.setDrawColor(26, 110, 142); 
+        doc.setLineWidth(0.4);
+        
+        // Define molecular nodes (relative to logoX, logoY)
+        const nodes = [
+          { x: 2, y: 5 },
+          { x: 8, y: 2 },
+          { x: 13, y: 3.5 },
+          { x: 4.5, y: 10 },
+          { x: 12.5, y: 12 },
+          { x: 1, y: 14.5 },
+          { x: 3, y: 17.5 },
+          { x: 9.5, y: 19 },
+        ];
+
+        // Draw connection lines between nodes
+        doc.line(logoX + nodes[0].x, logoY + nodes[0].y, logoX + nodes[1].x, logoY + nodes[1].y);
+        doc.line(logoX + nodes[0].x, logoY + nodes[0].y, logoX + nodes[3].x, logoY + nodes[3].y);
+        doc.line(logoX + nodes[1].x, logoY + nodes[1].y, logoX + nodes[3].x, logoY + nodes[3].y);
+        doc.line(logoX + nodes[1].x, logoY + nodes[1].y, logoX + nodes[2].x, logoY + nodes[2].y);
+        doc.line(logoX + nodes[2].x, logoY + nodes[2].y, logoX + nodes[4].x, logoY + nodes[4].y);
+        doc.line(logoX + nodes[3].x, logoY + nodes[3].y, logoX + nodes[4].x, logoY + nodes[4].y);
+        doc.line(logoX + nodes[3].x, logoY + nodes[3].y, logoX + nodes[5].x, logoY + nodes[5].y);
+        doc.line(logoX + nodes[4].x, logoY + nodes[4].y, logoX + nodes[5].x, logoY + nodes[5].y);
+        doc.line(logoX + nodes[4].x, logoY + nodes[4].y, logoX + nodes[7].x, logoY + nodes[7].y);
+        doc.line(logoX + nodes[5].x, logoY + nodes[5].y, logoX + nodes[6].x, logoY + nodes[6].y);
+        doc.line(logoX + nodes[5].x, logoY + nodes[5].y, logoX + nodes[7].x, logoY + nodes[7].y);
+        doc.line(logoX + nodes[6].x, logoY + nodes[6].y, logoX + nodes[7].x, logoY + nodes[7].y);
+
+        // Draw nodes
+        const nodeColors = [
+          { r: 17, g: 53, b: 106 }, 
+          { r: 20, g: 77, b: 133 },
+          { r: 11, g: 117, b: 128 }, 
+          { r: 11, g: 117, b: 128 },
+          { r: 12, g: 138, b: 150 },
+          { r: 14, g: 166, b: 118 }, 
+          { r: 16, g: 185, b: 129 },
+          { r: 12, g: 138, b: 150 },
+        ];
+
+        nodes.forEach((node, idx) => {
+          const color = nodeColors[idx];
+          doc.setFillColor(color.r, color.g, color.b);
+          doc.setDrawColor(255, 255, 255);
+          doc.setLineWidth(0.3);
+          doc.circle(logoX + node.x, logoY + node.y, 1.1, "FD");
+        });
+
+        // Text part of Logo
+        doc.setFont("Helvetica", "bold");
+        doc.setFontSize(16);
+        doc.setTextColor(17, 53, 106); 
+        doc.text("Sync", 32, 19);
+
+        doc.setTextColor(11, 117, 128); 
+        doc.text("AI", 46, 19);
+
+        // Radiating AI circular circuit dot
+        doc.setFillColor(14, 166, 118); 
+        doc.setDrawColor(255, 255, 255);
+        doc.setLineWidth(0.2);
+        doc.circle(53, 14, 0.9, "FD");
+
+        // Subtitle: "Consultancy Pvt. Ltd."
+        doc.setFont("Helvetica", "bold");
+        doc.setFontSize(5.5);
+        doc.setTextColor(120, 120, 120);
+        doc.text("CONSULTANCY PVT. LTD.", 32, 22.5);
+
+        // Sub-headline
+        doc.setFont("Helvetica", "bold");
+        doc.setFontSize(7);
+        doc.setTextColor(140, 140, 140);
+        doc.text("COMPLIANCE & OBLIGATION REGISTRY", 15, 28);
+
+        // Right Header Block
+        doc.setFont("Helvetica", "bold");
+        doc.setFontSize(9);
+        doc.setTextColor(50, 50, 50);
+        doc.text("COMPLIANCE DEADLINE REPORT", 195, 17, { align: "right" });
+
+        doc.setFont("Helvetica", "normal");
+        doc.setFontSize(7);
+        doc.setTextColor(100, 100, 100);
+        doc.text(`Date Generated: ${new Date().toLocaleDateString(undefined, { dateStyle: 'long' })}`, 195, 21, { align: "right" });
+        
+        const scopeText = searchTerm || selectedCategory || selectedStatus || selectedPerson ? "Filtered Subset" : "All System Obligations";
+        doc.text(`Scope: ${scopeText}`, 195, 24.5, { align: "right" });
+        
+        doc.setFont("Helvetica", "bold");
+        doc.text("Database: ", 175, 28, { align: "right" });
+        doc.setTextColor(26, 110, 142); 
+        doc.text("Active (Supabase)", 195, 28, { align: "right" });
+
+        // Border below header
+        doc.setDrawColor(220, 220, 220);
+        doc.setLineWidth(0.4);
+        doc.line(15, 31, 195, 31);
+      };
+
+      const drawFooter = (pageNumber: number) => {
+        doc.setDrawColor(240, 240, 240);
+        doc.setLineWidth(0.4);
+        doc.line(15, 282, 195, 282);
+
+        doc.setFont("Helvetica", "bold");
+        doc.setFontSize(7);
+        doc.setTextColor(160, 160, 160);
+        doc.text("SyncAI Consultancy Pvt. Ltd. Compliance System", 15, 287);
+        doc.text("CONFIDENTIAL - FOR INTERNAL USE ONLY", 105, 287, { align: "center" });
+        doc.text(`Page ${pageNumber} of ${TOTAL_PAGES_PLACEHOLDER}`, 195, 287, { align: "right" });
+      };
+
+      // First page setup
+      drawHeader();
+
+      // 1. Company Information Section
+      let currentY = 37;
+      doc.setFillColor(240, 247, 247); 
+      doc.setDrawColor(224, 239, 240); 
+      doc.setLineWidth(0.3);
+      doc.roundedRect(15, currentY, 180, 16, 2, 2, "FD");
+
+      doc.setFont("Helvetica", "bold");
+      doc.setFontSize(6.5);
+      doc.setTextColor(110, 130, 140);
+      doc.text("COMPANY INFORMATION", 18, currentY + 5);
+      doc.text("DEPARTMENT & AUTHORITY", 78, currentY + 5);
+      doc.text("TOTAL STATUS VOLUME", 138, currentY + 5);
+
+      doc.setFont("Helvetica", "bold");
+      doc.setFontSize(8);
+      doc.setTextColor(26, 58, 110); 
+      doc.text("SyncAI Consultancy Pvt. Ltd.", 18, currentY + 10.5);
+      doc.text("Compliance & Legal Obligations Registry", 78, currentY + 10.5);
+      doc.text(`${processedReminders.length} of ${reminders.length} Items Listed`, 138, currentY + 10.5);
+
+      // 2. Metrics row
+      currentY = 58;
+      const overdueCount = processedReminders.filter(r => getDaysRemainingLocal(r.expiryDate) < 0 || r.status === "Expired").length;
+      const soonCount = processedReminders.filter(r => {
+        const d = getDaysRemainingLocal(r.expiryDate);
+        return d >= 0 && d <= 30 && r.status !== "Expired";
+      }).length;
+      const healthyCount = processedReminders.filter(r => getDaysRemainingLocal(r.expiryDate) > 30 && r.status !== "Expired").length;
+
+      // Overdue Card
+      doc.setFillColor(254, 242, 242); 
+      doc.setDrawColor(254, 226, 226); 
+      doc.roundedRect(15, currentY, 56, 14, 1.5, 1.5, "FD");
+      doc.setFont("Helvetica", "bold");
+      doc.setFontSize(6);
+      doc.setTextColor(239, 68, 68); 
+      doc.text("OVERDUE / EXPIRED", 18, currentY + 4.5);
+      doc.setFontSize(11);
+      doc.text(String(overdueCount), 18, currentY + 10);
+
+      // Expiring Soon Card
+      doc.setFillColor(255, 251, 235); 
+      doc.setDrawColor(254, 243, 199); 
+      doc.roundedRect(77, currentY, 56, 14, 1.5, 1.5, "FD");
+      doc.setFont("Helvetica", "bold");
+      doc.setFontSize(6);
+      doc.setTextColor(217, 119, 6); 
+      doc.text("EXPIRING SOON", 80, currentY + 4.5);
+      doc.setFontSize(11);
+      doc.text(String(soonCount), 80, currentY + 10);
+
+      // Healthy Card
+      doc.setFillColor(240, 253, 244); 
+      doc.setDrawColor(220, 252, 231); 
+      doc.roundedRect(139, currentY, 56, 14, 1.5, 1.5, "FD");
+      doc.setFont("Helvetica", "bold");
+      doc.setFontSize(6);
+      doc.setTextColor(22, 163, 74); 
+      doc.text("ACTIVE & HEALTHY", 142, currentY + 4.5);
+      doc.setFontSize(11);
+      doc.text(String(healthyCount), 142, currentY + 10);
+
+      // 3. Table header
+      currentY = 78;
+      doc.setFillColor(243, 244, 246); 
+      doc.setDrawColor(229, 231, 235); 
+      doc.roundedRect(15, currentY, 180, 8, 1, 1, "FD");
+
+      doc.setFont("Helvetica", "bold");
+      doc.setFontSize(7.5);
+      doc.setTextColor(75, 85, 99); 
+      doc.text("OBLIGATION NAME", 18, currentY + 5.5);
+      doc.text("CATEGORY", 70, currentY + 5.5);
+      doc.text("EXPIRY DATE", 110, currentY + 5.5);
+      doc.text("RESPONSIBLE PERSON", 145, currentY + 5.5);
+      doc.text("STATUS", 182, currentY + 5.5, { align: "center" });
+
+      currentY = 86; 
+      let currentPage = 1;
+
+      // Draw items
+      if (processedReminders.length === 0) {
+        doc.setFont("Helvetica", "italic");
+        doc.setFontSize(8.5);
+        doc.setTextColor(150, 150, 150);
+        doc.text("No obligations found matching the current report parameters.", 105, currentY + 12, { align: "center" });
+        currentY += 20;
+      } else {
+        processedReminders.forEach((r) => {
+          // Check for page break (limit to 255 to allow space for page numbers/footers)
+          if (currentY > 255) {
+            drawFooter(currentPage);
+            doc.addPage();
+            currentPage++;
+            drawHeader();
+            
+            // Draw Table header on new page
+            currentY = 37;
+            doc.setFillColor(243, 244, 246); 
+            doc.setDrawColor(229, 231, 235); 
+            doc.roundedRect(15, currentY, 180, 8, 1, 1, "FD");
+
+            doc.setFont("Helvetica", "bold");
+            doc.setFontSize(7.5);
+            doc.setTextColor(75, 85, 99); 
+            doc.text("OBLIGATION NAME", 18, currentY + 5.5);
+            doc.text("CATEGORY", 70, currentY + 5.5);
+            doc.text("EXPIRY DATE", 110, currentY + 5.5);
+            doc.text("RESPONSIBLE PERSON", 145, currentY + 5.5);
+            doc.text("STATUS", 182, currentY + 5.5, { align: "center" });
+
+            currentY = 45;
+          }
+
+          // Row separator line
+          doc.setDrawColor(243, 244, 246);
+          doc.setLineWidth(0.25);
+          doc.line(15, currentY, 195, currentY);
+
+          // Draw row values
+          doc.setFont("Helvetica", "bold");
+          doc.setFontSize(7.5);
+          doc.setTextColor(17, 24, 39); 
+
+          let itemNameText = r.itemName;
+          if (itemNameText.length > 34) {
+            itemNameText = itemNameText.substring(0, 31) + "...";
+          }
+          doc.text(itemNameText, 18, currentY + 5.5);
+
+          doc.setFont("Helvetica", "normal");
+          doc.setTextColor(75, 85, 99); 
+          doc.text(r.category, 70, currentY + 5.5);
+
+          const days = getDaysRemainingLocal(r.expiryDate);
+          const isOverdue = days < 0 || r.status === "Expired";
+          const isSoon = days >= 0 && days <= 30 && r.status !== "Expired";
+
+          doc.setFont("Helvetica", "bold");
+          doc.setTextColor(17, 24, 39);
+          doc.text(r.expiryDate, 110, currentY + 5);
+          doc.setFont("Helvetica", "normal");
+          doc.setFontSize(6);
+          doc.setTextColor(140, 140, 140);
+          const remainingText = isOverdue ? "Expired" : `${days} days remaining`;
+          doc.text(remainingText, 110, currentY + 8);
+
+          doc.setFont("Helvetica", "normal");
+          doc.setFontSize(7.5);
+          doc.setTextColor(75, 85, 99);
+          let respNameText = r.responsibleName;
+          if (respNameText.length > 22) {
+            respNameText = respNameText.substring(0, 19) + "...";
+          }
+          doc.text(respNameText, 145, currentY + 5);
+          doc.setFontSize(6);
+          doc.setTextColor(140, 140, 140);
+          let respEmailText = r.responsibleEmail;
+          if (respEmailText.length > 25) {
+            respEmailText = respEmailText.substring(0, 22) + "...";
+          }
+          doc.text(respEmailText, 145, currentY + 8);
+
+          // Status Badge
+          let badgeBg = [240, 253, 244]; 
+          let badgeBorder = [220, 252, 231]; 
+          let badgeText = [22, 163, 74]; 
+          let badgeLabel = "HEALTHY";
+
+          if (isOverdue) {
+            badgeBg = [254, 242, 242]; 
+            badgeBorder = [254, 226, 226]; 
+            badgeText = [185, 28, 28]; 
+            badgeLabel = "OVERDUE";
+          } else if (isSoon) {
+            badgeBg = [255, 251, 235]; 
+            badgeBorder = [254, 243, 199]; 
+            badgeText = [180, 83, 9]; 
+            badgeLabel = "DUE SOON";
+          }
+
+          doc.setFillColor(badgeBg[0], badgeBg[1], badgeBg[2]);
+          doc.setDrawColor(badgeBorder[0], badgeBorder[1], badgeBorder[2]);
+          doc.setLineWidth(0.25);
+          doc.roundedRect(172, currentY + 2.5, 20, 4.5, 0.8, 0.8, "FD");
+
+          doc.setFont("Helvetica", "bold");
+          doc.setFontSize(5.5);
+          doc.setTextColor(badgeText[0], badgeText[1], badgeText[2]);
+          doc.text(badgeLabel, 182, currentY + 5.7, { align: "center" });
+
+          currentY += 10.5; 
+        });
+      }
+
+      // Check if signature section fits, if not, push to new page
+      if (currentY > 230) {
+        drawFooter(currentPage);
+        doc.addPage();
+        currentPage++;
+        drawHeader();
+        currentY = 37;
+      }
+
+      // Horizontal divider above signatures
+      doc.setDrawColor(240, 240, 240);
+      doc.setLineWidth(0.4);
+      doc.line(15, currentY + 5, 195, currentY + 5);
+
+      doc.setFont("Helvetica", "bold");
+      doc.setFontSize(6.5);
+      doc.setTextColor(140, 140, 140);
+      doc.text("SyncAI Consultancy Pvt. Ltd. Compliance System", 15, currentY + 12);
+      
+      doc.setFont("Helvetica", "normal");
+      doc.setFontSize(6);
+      doc.text("This document is an authentic computer-generated compliance and legal record of active obligations.", 15, currentY + 15.5);
+      doc.text("Any authorized adjustments or renewals must be registered with legal clearance.", 15, currentY + 18.5);
+
+      // Signature Line
+      doc.setDrawColor(160, 160, 160);
+      doc.setLineWidth(0.3);
+      doc.line(140, currentY + 18, 185, currentY + 18);
+      doc.setFont("Helvetica", "bold");
+      doc.setFontSize(6.5);
+      doc.setTextColor(120, 120, 120);
+      doc.text("AUTHORIZED SIGNATORY", 162.5, currentY + 21.5, { align: "center" });
+
+      // Draw footer on last page
+      drawFooter(currentPage);
+
+      // Overwrite placeholders
+      const totalPagesStr = String(currentPage);
+      for (let i = 1; i <= currentPage; i++) {
+        doc.setPage(i);
+        
+        // Clear area where the page numbers are drawn
+        doc.setFillColor(255, 255, 255);
+        doc.setDrawColor(255, 255, 255);
+        doc.rect(172, 283.5, 24, 5.5, "F");
+        
+        // Draw real page numbers
+        doc.setFont("Helvetica", "bold");
+        doc.setFontSize(7);
+        doc.setTextColor(160, 160, 160);
+        doc.text(`Page ${i} of ${totalPagesStr}`, 195, 287, { align: "right" });
+      }
+
+      // Filename construction
+      const formattedDate = new Date().toISOString().split('T')[0];
+      const filename = `SyncAI_Compliance_Report_${formattedDate}.pdf`;
+
+      // Trigger automatic blob download
+      const pdfBlob = doc.output("blob");
+      const blobURL = URL.createObjectURL(pdfBlob);
+      
+      const downloadLink = document.createElement("a");
+      downloadLink.href = blobURL;
+      downloadLink.download = filename;
+      document.body.appendChild(downloadLink);
+      downloadLink.click();
+      document.body.removeChild(downloadLink);
+      URL.revokeObjectURL(blobURL);
+      
+      setIsGeneratingPdf(false);
+    } catch (err: any) {
+      console.error("PDF download failure:", err);
+      setPdfError(err?.message || "An unexpected error occurred during PDF generation.");
+      setIsGeneratingPdf(false);
+    }
   };
 
   // Find overdue or expiring <= 10 days reminders automatically for page load check
@@ -576,8 +1010,17 @@ export default function Dashboard({
             </div>
           </div>
 
-          {/* Action Buttons: Add New and Old Add Trigger */}
+          {/* Action Buttons: Add New and Export PDF Report */}
           <div className="flex items-center gap-2.5 shrink-0 self-end lg:self-auto">
+            <button
+              onClick={() => setIsReportOpen(true)}
+              className="flex items-center justify-center gap-1.5 px-4 py-2 bg-white hover:bg-gray-50 text-gray-700 text-xs font-bold rounded-lg shadow-xs border border-gray-200 cursor-pointer transition-all"
+              title="Generate a printable compliance PDF report of your obligations"
+            >
+              <FileSpreadsheet className="w-4 h-4 text-blue-600" />
+              Generate PDF Report
+            </button>
+            
             {/* Direct Dashboard Quick Add (REMAINING ON DASHBOARD) */}
             <button
               onClick={() => setIsAddModalOpen(true)}
@@ -756,8 +1199,8 @@ export default function Dashboard({
                             <Mail className="w-3 h-3 shrink-0 text-blue-500" />
                             <span className="truncate max-w-[150px]">{r.responsibleEmail}</span>
                           </div>
-                          {r.customerEmail && (
-                            <div className="mt-1 flex items-center gap-1 bg-indigo-50 border border-indigo-100/50 rounded-md px-1.5 py-0.5 w-fit" title={`Customer Email configured: ${r.customerName || 'Customer'} (${r.customerEmail})`}>
+                          {r.customer_email && (
+                            <div className="mt-1 flex items-center gap-1 bg-indigo-50 border border-indigo-100/50 rounded-md px-1.5 py-0.5 w-fit" title={`Customer Email configured: ${r.customer_name || 'Customer'} (${r.customer_email})`}>
                               <span className="inline-block w-1.5 h-1.5 bg-indigo-500 rounded-full animate-pulse"></span>
                               <span className="text-[9px] font-bold text-indigo-700 uppercase tracking-wider">Also Notifies Customer</span>
                             </div>
@@ -868,17 +1311,17 @@ export default function Dashboard({
                                   </div>
                                 </div>
 
-                                {r.customerEmail && (
+                                {r.customer_email && (
                                   <div>
                                     <span className="block text-[10px] font-bold text-gray-400 uppercase tracking-wider mb-1.5">Also Notifies Customer</span>
                                     <div className="bg-indigo-50 p-3.5 rounded-lg border border-indigo-100/50 flex flex-col gap-1.5 text-xs">
                                       <div className="flex items-center gap-1.5 text-indigo-950">
                                         <span className="text-gray-400 font-semibold uppercase tracking-wide text-[10px] w-12">Name:</span>
-                                        <span className="font-bold text-indigo-900">{r.customerName || <span className="text-gray-400 italic font-normal">Not Provided</span>}</span>
+                                        <span className="font-bold text-indigo-900">{r.customer_name || <span className="text-gray-400 italic font-normal">Not Provided</span>}</span>
                                       </div>
                                       <div className="flex items-center gap-1.5 text-indigo-950">
                                         <span className="text-gray-400 font-semibold uppercase tracking-wide text-[10px] w-12">Email:</span>
-                                        <span className="font-mono font-bold text-indigo-900">{r.customerEmail}</span>
+                                        <span className="font-mono font-bold text-indigo-900">{r.customer_email}</span>
                                       </div>
                                     </div>
                                   </div>
@@ -1235,6 +1678,179 @@ export default function Dashboard({
                 </button>
               </div>
             </form>
+          </div>
+        </div>
+      )}
+
+      {/* 8. SyncAI Compliance & Obligations PDF Report Modal */}
+      {isReportOpen && (
+        <div className="fixed inset-0 bg-gray-900/30 backdrop-blur-xs flex items-center justify-center p-4 z-50 animate-fade-in no-print">
+          <div className="bg-white rounded-xl shadow-2xl border border-gray-100 w-full max-w-4xl max-h-[90vh] flex flex-col overflow-hidden animate-slide-up">
+            {/* Modal Header */}
+            <div className="p-4 border-b border-gray-100 bg-gray-50/50 flex items-center justify-between no-print">
+              <div className="flex items-center gap-2">
+                <FileSpreadsheet className="w-5 h-5 text-blue-600" />
+                <h3 className="font-bold text-gray-900 text-sm">Generate SyncAI Compliance Report</h3>
+              </div>
+              <div className="flex items-center gap-2">
+                <button
+                  onClick={handleDownloadPDF}
+                  disabled={isGeneratingPdf}
+                  className="flex items-center gap-1.5 px-3.5 py-1.5 bg-blue-600 hover:bg-blue-700 text-white text-xs font-black rounded-lg cursor-pointer transition-colors shadow-xs border border-blue-700 disabled:opacity-50 disabled:cursor-not-allowed"
+                >
+                  <Printer className="w-3.5 h-3.5" />
+                  {isGeneratingPdf ? "Generating PDF..." : "Download PDF"}
+                </button>
+                <button
+                  onClick={() => {
+                    setIsReportOpen(false);
+                    setPdfError(null);
+                  }}
+                  className="text-gray-400 hover:text-gray-600 hover:bg-gray-200 p-1.5 rounded-md transition-colors cursor-pointer"
+                >
+                  <X className="w-4 h-4" />
+                </button>
+              </div>
+            </div>
+
+            {/* Error Message */}
+            {pdfError && (
+              <div className="mx-8 mt-4 p-3 bg-red-50 border border-red-200 text-red-700 text-xs rounded-lg font-medium flex items-center gap-2 animate-fade-in no-print">
+                <AlertTriangle className="w-4 h-4 text-red-500 shrink-0" />
+                <span>{pdfError}</span>
+              </div>
+            )}
+
+            {/* Printable Report Document Body */}
+            <div className="flex-1 overflow-y-auto p-8 bg-white" id="printable-report">
+              {/* Report Header Block */}
+              <div className="flex flex-col sm:flex-row justify-between items-start border-b border-gray-200 pb-6 mb-6 gap-4">
+                <div>
+                  <SyncAILogo height={45} />
+                  <p className="text-[10px] text-gray-400 font-bold tracking-widest mt-1.5 uppercase font-sans">
+                    SyncAI Compliance &amp; Obligation Registry
+                  </p>
+                </div>
+                <div className="text-left sm:text-right text-xs text-gray-500 space-y-1">
+                  <p className="font-bold text-gray-800 text-sm">COMPLIANCE DEADLINE REPORT</p>
+                  <p>Date Generated: {new Date().toLocaleDateString(undefined, { dateStyle: 'long' })}</p>
+                  <p>Scope: {searchTerm || selectedCategory || selectedStatus || selectedPerson ? "Filtered Subset" : "All System Obligations"}</p>
+                  <p>Database: <span className="font-bold uppercase text-blue-600">Active</span></p>
+                </div>
+              </div>
+
+              {/* Company Information Block */}
+              <div className="bg-blue-50/60 rounded-xl p-4 border border-blue-100 mb-6 grid grid-cols-1 sm:grid-cols-3 gap-4">
+                <div>
+                  <span className="block text-[10px] font-bold text-gray-400 uppercase tracking-wider">Company Information</span>
+                  <span className="text-xs font-bold text-gray-800">SyncAI Consultancy Pvt. Ltd.</span>
+                </div>
+                <div>
+                  <span className="block text-[10px] font-bold text-gray-400 uppercase tracking-wider">Department &amp; Authority</span>
+                  <span className="text-xs font-bold text-gray-800">Compliance &amp; Legal Obligations Registry</span>
+                </div>
+                <div>
+                  <span className="block text-[10px] font-bold text-gray-400 uppercase tracking-wider">Total Status Volume</span>
+                  <span className="text-xs font-bold text-gray-800">
+                    {processedReminders.length} of {reminders.length} Items Listed
+                  </span>
+                </div>
+              </div>
+
+              {/* Status Mini Metrics for the Report */}
+              <div className="grid grid-cols-3 gap-3 mb-6 animate-fade-in">
+                <div className="p-3 bg-red-50/60 rounded-lg border border-red-100 text-center">
+                  <span className="block text-[9px] font-bold text-red-500 uppercase tracking-wider">Overdue / Expired</span>
+                  <span className="text-lg font-black text-red-700">
+                    {processedReminders.filter(r => getDaysRemainingLocal(r.expiryDate) < 0 || r.status === "Expired").length}
+                  </span>
+                </div>
+                <div className="p-3 bg-amber-50/60 rounded-lg border border-amber-100 text-center">
+                  <span className="block text-[9px] font-bold text-amber-600 uppercase tracking-wider">Expiring Soon</span>
+                  <span className="text-lg font-black text-amber-700">
+                    {processedReminders.filter(r => {
+                      const d = getDaysRemainingLocal(r.expiryDate);
+                      return d >= 0 && d <= 30 && r.status !== "Expired";
+                    }).length}
+                  </span>
+                </div>
+                <div className="p-3 bg-green-50/60 rounded-lg border border-green-100 text-center">
+                  <span className="block text-[9px] font-bold text-green-600 uppercase tracking-wider">Active &amp; Healthy</span>
+                  <span className="text-lg font-black text-green-700">
+                    {processedReminders.filter(r => getDaysRemainingLocal(r.expiryDate) > 30 && r.status !== "Expired").length}
+                  </span>
+                </div>
+              </div>
+
+              {/* Report Table */}
+              <div className="border border-gray-100 rounded-lg overflow-hidden">
+                <table className="w-full text-left text-xs border-collapse">
+                  <thead className="bg-gray-100 border-b border-gray-200 font-bold text-gray-700 uppercase">
+                    <tr>
+                      <th className="py-2.5 px-3">Obligation Name</th>
+                      <th className="py-2.5 px-3">Category</th>
+                      <th className="py-2.5 px-3">Expiry Date</th>
+                      <th className="py-2.5 px-3">Responsible Person</th>
+                      <th className="py-2.5 px-3 text-center">Status</th>
+                    </tr>
+                  </thead>
+                  <tbody className="divide-y divide-gray-100 text-gray-800">
+                    {processedReminders.length === 0 ? (
+                      <tr>
+                        <td colSpan={5} className="py-8 text-center text-gray-400 font-medium italic bg-gray-50/30">
+                          No obligations found matching the current report parameters.
+                        </td>
+                      </tr>
+                    ) : (
+                      processedReminders.map((r) => {
+                        const days = getDaysRemainingLocal(r.expiryDate);
+                        const isOverdue = days < 0 || r.status === "Expired";
+                        const isSoon = days >= 0 && days <= 30 && r.status !== "Expired";
+                        return (
+                          <tr key={r.id} className="hover:bg-gray-50/30">
+                            <td className="py-2.5 px-3 font-bold text-gray-900">{r.itemName}</td>
+                            <td className="py-2.5 px-3 text-gray-600">{r.category}</td>
+                            <td className="py-2.5 px-3 font-mono text-gray-900">
+                              {r.expiryDate} 
+                              <span className="text-[10px] text-gray-400 block mt-0.5">
+                                {isOverdue ? "Expired" : `${days} days remaining`}
+                              </span>
+                            </td>
+                            <td className="py-2.5 px-3 text-gray-600">
+                              <div>{r.responsibleName}</div>
+                              <div className="text-[10px] text-gray-400 font-mono">{r.responsibleEmail}</div>
+                            </td>
+                            <td className="py-2.5 px-3 text-center">
+                              <span className={`inline-block px-2 py-0.5 rounded font-bold text-[9px] uppercase tracking-wider ${
+                                isOverdue 
+                                  ? "bg-red-50 text-red-700 border border-red-100" 
+                                  : isSoon 
+                                    ? "bg-amber-50 text-amber-700 border border-amber-100" 
+                                    : "bg-green-50 text-green-700 border border-green-100"
+                              }`}>
+                                {isOverdue ? "Overdue" : isSoon ? "Due Soon" : "Healthy"}
+                              </span>
+                            </td>
+                          </tr>
+                        );
+                      })
+                    )}
+                  </tbody>
+                </table>
+              </div>
+
+              {/* Signatures & Footer info */}
+              <div className="mt-12 pt-8 border-t border-gray-100 flex justify-between items-end gap-4">
+                <div className="text-[10px] text-gray-400 font-semibold space-y-1 max-w-sm">
+                  <p>SyncAI Consultancy Pvt. Ltd. Compliance System</p>
+                  <p>This document is a certified computer-generated record of the company's active legal, operational, and commercial obligations.</p>
+                </div>
+                <div className="text-right shrink-0">
+                  <div className="w-36 border-b border-gray-400 mx-auto pb-1 mt-6"></div>
+                  <span className="text-[9px] font-bold text-gray-400 uppercase tracking-wider block mt-1 text-center">Authorized Signatory</span>
+                </div>
+              </div>
+            </div>
           </div>
         </div>
       )}

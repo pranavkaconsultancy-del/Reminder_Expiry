@@ -4,6 +4,19 @@
 @theme {
   --font-sans: "Inter", ui-sans-serif, system-ui, sans-serif;
   --font-mono: "JetBrains Mono", ui-monospace, SFMono-Regular, monospace;
+
+  /* Redefine default Tailwind blue colors to match SyncAI brand identity */
+  --color-blue-50: #f0f7f7;
+  --color-blue-100: #e0eff0;
+  --color-blue-200: #b3dae0;
+  --color-blue-300: #80bfc9;
+  --color-blue-400: #4da1b0;
+  --color-blue-500: #0f9b8e;     /* Brand Teal */
+  --color-blue-600: #1a6e8e;     /* Brand Teal-Blue middle-tone for primary buttons/nav */
+  --color-blue-700: #14536c;     /* Brand Deep Blue-Teal for hover states */
+  --color-blue-800: #113f54;     /* Dark Navy-Teal for text */
+  --color-blue-900: #1a3a6e;     /* Brand Deep Blue for headers / cards */
+  --color-blue-950: #0d1e3d;
 }
 
 /* Base custom utility animations for modals and drawers */
@@ -23,4 +36,50 @@
 
 .animate-slide-up {
   animation: slideUp 0.3s cubic-bezier(0.16, 1, 0.3, 1) forwards;
+}
+
+/* Print styles for generated SyncAI PDF Reports */
+@media print {
+  /* Hide the entire application background and UI */
+  body {
+    background-color: white !important;
+    color: black !important;
+  }
+  
+  body > * {
+    visibility: hidden !important;
+  }
+  
+  /* Show only the specific printable report element */
+  #printable-report, #printable-report * {
+    visibility: visible !important;
+  }
+  
+  #printable-report {
+    position: absolute !important;
+    left: 0 !important;
+    top: 0 !important;
+    width: 100% !important;
+    margin: 0 !important;
+    padding: 0 !important;
+    box-shadow: none !important;
+    border: none !important;
+    background: white !important;
+  }
+
+  /* Exclude interactive buttons, modals close controls, etc. from print */
+  .no-print {
+    display: none !important;
+  }
+
+  /* Avoid page breaks inside table rows */
+  tr {
+    page-break-inside: avoid !important;
+  }
+  
+  /* Set exact page margins */
+  @page {
+    size: auto;
+    margin: 1.5cm 1.5cm 1.5cm 1.5cm;
+  }
 }

@@ -1,11 +1,13 @@
 import React, { useState, useEffect } from "react";
-import { Check, Settings, ShieldAlert, Plus, Trash2, RotateCcw, Save, AlertCircle } from "lucide-react";
+import { Check, Settings, ShieldAlert, Plus, Trash2, RotateCcw, Save, AlertCircle, Upload, Image as ImageIcon, Bot } from "lucide-react";
 import { GlobalConfig, ReminderRuleInterval, RULE_LABELS } from "../types";
 
 interface RulesManagerProps {
   config: GlobalConfig;
   onSaveConfig: (newConfig: GlobalConfig) => Promise<void>;
   usedCategories: string[]; // List of categories currently in use (so we warning-guard deletion)
+  chatbotLogo: string;
+  onLogoChange: (newLogo: string) => void;
 }
 
 const RULE_OPTIONS: { value: ReminderRuleInterval; label: string; desc: string }[] = [
@@ -31,7 +33,7 @@ const RULE_OPTIONS: { value: ReminderRuleInterval; label: string; desc: string }
   },
 ];
 
-export default function RulesManager({ config, onSaveConfig, usedCategories }: RulesManagerProps) {
+export default function RulesManager({ config, onSaveConfig, usedCategories, chatbotLogo, onLogoChange }: RulesManagerProps) {
   const [defaultRules, setDefaultRules] = useState<ReminderRuleInterval[]>([]);
   const [categories, setCategories] = useState<string[]>([]);
   const [categoryRenewalPeriods, setCategoryRenewalPeriods] = useState<Record<string, string>>({});
@@ -163,7 +165,7 @@ export default function RulesManager({ config, onSaveConfig, usedCategories }: R
         </div>
       )}
 
-      <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
+      <div className="grid grid-cols-1 lg:grid-cols-3 gap-6">
         {/* Rules Card */}
         <div className="bg-white rounded-xl border border-gray-100 shadow-xs p-6 space-y-6">
           <div className="flex items-center gap-2.5 border-b border-gray-100 pb-3">
@@ -347,6 +349,81 @@ export default function RulesManager({ config, onSaveConfig, usedCategories }: R
                 );
               })
             )}
+          </div>
+        </div>
+
+        {/* Chatbot Customization Card */}
+        <div className="bg-white rounded-xl border border-gray-100 shadow-xs p-6 flex flex-col space-y-4">
+          <div className="flex items-center gap-2.5 border-b border-gray-100 pb-3">
+            <Bot className="w-5 h-5 text-indigo-600" />
+            <div>
+              <h3 className="font-semibold text-gray-900 text-sm">Chatbot Brand Identity</h3>
+              <p className="text-xs text-gray-500 mt-0.5">Customize the logo shown next to your AI Assistant's messages.</p>
+            </div>
+          </div>
+
+          <div className="flex-1 flex flex-col justify-between space-y-4">
+            <div className="space-y-3.5">
+              {/* Logo Preview and Initials Placeholder */}
+              <div className="flex items-center gap-4">
+                {chatbotLogo ? (
+                  <img
+                    src={chatbotLogo}
+                    alt="Chatbot Custom Logo"
+                    className="w-16 h-16 rounded-xl object-cover border border-gray-200 shadow-xs bg-gray-50"
+                    referrerPolicy="no-referrer"
+                  />
+                ) : (
+                  <div className="w-16 h-16 rounded-xl bg-indigo-50 border border-indigo-100 text-indigo-700 font-bold text-xl flex items-center justify-center shadow-xs">
+                    CB
+                  </div>
+                )}
+                <div className="space-y-1">
+                  <span className="block text-xs font-bold text-gray-800">
+                    {chatbotLogo ? "Custom Logo Uploaded" : "Using Default Initials"}
+                  </span>
+                  <span className="block text-[11px] text-gray-400 leading-relaxed">
+                    Upload an image to customize the chatbot avatar, or clear it to use the neutral placeholder (CB).
+                  </span>
+                </div>
+              </div>
+            </div>
+
+            {/* Upload Action and Clear Buttons */}
+            <div className="flex flex-wrap items-center gap-3 pt-2">
+              <label className="flex items-center gap-2 px-4 py-2 bg-blue-600 hover:bg-blue-700 text-white text-xs font-semibold rounded-lg shadow-xs border border-blue-700 cursor-pointer transition-colors">
+                <Upload className="w-3.5 h-3.5" />
+                Upload New Logo
+                <input
+                  type="file"
+                  accept="image/*"
+                  onChange={(e) => {
+                    const file = e.target.files?.[0];
+                    if (file) {
+                      const reader = new FileReader();
+                      reader.onloadend = () => {
+                        if (typeof reader.result === "string") {
+                          onLogoChange(reader.result);
+                        }
+                      };
+                      reader.readAsDataURL(file);
+                    }
+                  }}
+                  className="hidden"
+                />
+              </label>
+
+              {chatbotLogo && (
+                <button
+                  type="button"
+                  onClick={() => onLogoChange("")}
+                  className="flex items-center gap-2 px-4 py-2 bg-white hover:bg-gray-50 border border-gray-200 text-red-600 hover:text-red-700 text-xs font-semibold rounded-lg transition-colors cursor-pointer"
+                >
+                  <Trash2 className="w-3.5 h-3.5" />
+                  Reset Logo
+                </button>
+              )}
+            </div>
           </div>
         </div>
       </div>

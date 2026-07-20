@@ -25,12 +25,16 @@ import {
 
 // Core Screen Imports
 import Dashboard from "./components/Dashboard";
+import CalendarView from "./components/CalendarView";
 import ReminderForm from "./components/ReminderForm";
 import ExcelUpload from "./components/ExcelUpload";
 import RulesManager from "./components/RulesManager";
 import NotificationsLog from "./components/NotificationsLog";
+import Chatbot from "./components/Chatbot";
+import VoiceCommandButton from "./components/VoiceCommandButton";
+import SyncAILogo from "./components/SyncAILogo";
 
-type ActiveTab = "dashboard" | "add" | "upload" | "rules" | "logs";
+type ActiveTab = "dashboard" | "calendar" | "add" | "upload" | "rules" | "logs";
 
 export default function App() {
   const [activeTab, setActiveTab] = useState<ActiveTab>("dashboard");
@@ -39,6 +43,28 @@ export default function App() {
     defaultRules: ["one_month_before", "one_week_before", "on_expiry"],
     categories: DEFAULT_CATEGORIES
   });
+  
+  // Chatbot logo state
+  const [chatbotLogo, setChatbotLogo] = useState<string>(() => {
+    try {
+      return localStorage.getItem("chatbot_custom_logo") || "";
+    } catch {
+      return "";
+    }
+  });
+
+  const handleLogoChange = (newLogo: string) => {
+    setChatbotLogo(newLogo);
+    try {
+      if (newLogo) {
+        localStorage.setItem("chatbot_custom_logo", newLogo);
+      } else {
+        localStorage.removeItem("chatbot_custom_logo");
+      }
+    } catch (e) {
+      console.error(e);
+    }
+  };
   
   // App-level database status
   const [dbStatus, setDbStatus] = useState<DatabaseStatus | null>(null);
@@ -102,6 +128,21 @@ export default function App() {
 
   useEffect(() => {
     loadData();
+
+    const handleDbChange = () => {
+      loadData();
+    };
+    const handleApplyFilter = () => {
+      setActiveTab("dashboard");
+    };
+
+    window.addEventListener("database-changed", handleDbChange);
+    window.addEventListener("apply-dashboard-filter", handleApplyFilter);
+
+    return () => {
+      window.removeEventListener("database-changed", handleDbChange);
+      window.removeEventListener("apply-dashboard-filter", handleApplyFilter);
+    };
   }, []);
 
   // Utility to display temporary alerts
@@ -224,36 +265,24 @@ export default function App() {
         <div className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8">
           <div className="flex items-center justify-between h-16">
             {/* Logo */}
-            <div className="flex items-center gap-3">
-              <div className="p-2 bg-blue-600 rounded-lg text-white shadow-xs">
-                <BellRing className="w-5 h-5" />
-              </div>
-              <div>
-                <div className="flex items-center gap-2">
-                  <h1 className="text-sm font-bold text-gray-900 tracking-tight leading-none">
-                    Reminder &amp; Expiry Manager
-                  </h1>
-                  {dbStatus && (
-                    <span 
-                      className={`px-1.5 py-0.5 rounded text-[8px] font-bold uppercase tracking-wider border select-none ${
-                        dbStatus.database === "supabase"
-                          ? "bg-emerald-50 border-emerald-200 text-emerald-700"
-                          : "bg-amber-50 border-amber-200 text-amber-700"
-                      }`}
-                      title={
-                        dbStatus.database === "supabase"
-                          ? "Connected to Supabase PostgreSQL database successfully!"
-                          : "Running in local storage fallback mode. Connect your Supabase DATABASE_URL in secrets."
-                      }
-                    >
-                      {dbStatus.database}
-                    </span>
-                  )}
-                </div>
-                <p className="text-[10px] text-gray-400 font-medium mt-1 uppercase tracking-wider">
-                  Obligations &amp; Compliance Control
-                </p>
-              </div>
+            <div className="flex items-center gap-4">
+              <SyncAILogo height={40} />
+              {dbStatus && (
+                <span 
+                  className={`px-1.5 py-0.5 rounded text-[8px] font-bold uppercase tracking-wider border select-none ${
+                    dbStatus.database === "supabase"
+                      ? "bg-emerald-50 border-emerald-200 text-emerald-700"
+                      : "bg-amber-50 border-amber-200 text-amber-700"
+                  }`}
+                  title={
+                    dbStatus.database === "supabase"
+                      ? "Connected to Supabase PostgreSQL database successfully!"
+                      : "Running in local storage fallback mode. Connect your Supabase DATABASE_URL in secrets."
+                  }
+                >
+                  {dbStatus.database}
+                </span>
+              )}
             </div>
 
             {/* Segmented Pill Navigation */}
@@ -267,6 +296,16 @@ export default function App() {
                 }`}
               >
                 Dashboard
+              </button>
+              <button
+                onClick={() => { setActiveTab("calendar"); setEditingReminder(null); }}
+                className={`px-3 py-1.5 rounded-lg text-xs font-semibold transition-all cursor-pointer ${
+                  activeTab === "calendar"
+                    ? "bg-white text-blue-600 shadow-xs"
+                    : "text-gray-500 hover:text-gray-800"
+                }`}
+              >
+                Calendar
               </button>
               <button
                 onClick={handleAddNewClick}
@@ -420,6 +459,13 @@ export default function App() {
               />
             )}
 
+            {activeTab === "calendar" && (
+              <CalendarView
+                reminders={reminders}
+                onEdit={handleEditClick}
+              />
+            )}
+
             {activeTab === "add" && (
               <ReminderForm
                 reminder={editingReminder}
@@ -442,6 +488,8 @@ export default function App() {
                 config={config}
                 onSaveConfig={handleSaveConfig}
                 usedCategories={usedCategories}
+                chatbotLogo={chatbotLogo}
+                onLogoChange={handleLogoChange}
               />
             )}
 
@@ -458,7 +506,7 @@ export default function App() {
       <footer className="bg-white border-t border-gray-100 py-4 mt-12">
         <div className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 flex flex-col sm:flex-row items-center justify-between gap-3 text-[10px] text-gray-400 font-medium">
           <div>
-            &copy; 2026 Reminder &amp; Expiry Manager. All Rights Reserved.
+            &copy; 2026 SyncAI Consultancy Pvt. Ltd. | Expiry &amp; Obligations Manager. All Rights Reserved.
           </div>
           <div className="flex items-center gap-3">
             <span>Security: Zero-Trust Policy</span>
@@ -467,6 +515,9 @@ export default function App() {
           </div>
         </div>
       </footer>
+
+      {/* Floating Chatbot Panel */}
+      <Chatbot reminders={reminders} chatbotLogo={chatbotLogo} />
     </div>
   );
 }

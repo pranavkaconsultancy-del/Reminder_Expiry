@@ -22,8 +22,8 @@ export interface Reminder {
   renewalPeriodOverride?: string; // override standard category renewal duration
   acknowledged?: boolean;
   acknowledged_at?: string;
-  customerName?: string;
-  customerEmail?: string;
+  customer_name?: string;
+  customer_email?: string;
 }
 
 export interface GlobalConfig {
