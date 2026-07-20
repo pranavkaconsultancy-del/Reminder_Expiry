@@ -1,9 +1,41 @@
 import { Reminder, GlobalConfig, NotificationLog } from "../types";
 
+// Helper to safely parse JSON and throw descriptive errors when the response is HTML/text (like 404 pages)
+async function safeJson(res: Response): Promise<any> {
+  const contentType = res.headers.get("content-type");
+  if (!contentType || !contentType.includes("application/json")) {
+    let text = "";
+    try {
+      text = await res.text();
+    } catch (e) {
+      // Ignore body read errors
+    }
+    const snippet = text ? text.substring(0, 150).trim() : "Empty Response";
+    throw new Error(
+      `API returned an unexpected non-JSON response (HTTP ${res.status}).\n` +
+      `This often happens if the backend server isn't running or if a route doesn't exist on your static hosting.\n` +
+      `Response prefix: "${snippet}"`
+    );
+  }
+  try {
+    return await res.json();
+  } catch (err: any) {
+    throw new Error(`Failed to parse JSON response: ${err?.message || err}`);
+  }
+}
+
 export async function fetchReminders(): Promise<Reminder[]> {
   const res = await fetch("/api/reminders");
-  if (!res.ok) throw new Error("Failed to fetch reminders");
-  return res.json();
+  if (!res.ok) {
+    // Attempt to parse any structured error if possible, else throw generic
+    try {
+      const errData = await safeJson(res);
+      throw new Error(errData.error || `Failed to fetch reminders (HTTP ${res.status})`);
+    } catch (e: any) {
+      throw new Error(e.message || `Failed to fetch reminders (HTTP ${res.status})`);
+    }
+  }
+  return safeJson(res);
 }
 
 export async function createReminder(reminder: Omit<Reminder, "id">): Promise<Reminder> {
@@ -13,13 +45,16 @@ export async function createReminder(reminder: Omit<Reminder, "id">): Promise<Re
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify(reminder),
     });
-    const data = await res.json();
-    console.log("Supabase insert response:", data);
     if (!res.ok) {
-      console.error("Supabase insert error details:", data);
-      throw new Error(data.error || "Failed to create reminder");
+      let errData: any = {};
+      try {
+        errData = await safeJson(res);
+      } catch (e: any) {
+        throw new Error(e.message || `Failed to create reminder (HTTP ${res.status})`);
+      }
+      throw new Error(errData.error || "Failed to create reminder");
     }
-    return data;
+    return await safeJson(res);
   } catch (err) {
     console.error("Supabase insert exception in browser:", err);
     throw err;
@@ -33,13 +68,16 @@ export async function updateReminder(id: string, reminder: Partial<Reminder>): P
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify(reminder),
     });
-    const data = await res.json();
-    console.log("Supabase update response:", data);
     if (!res.ok) {
-      console.error("Supabase update error details:", data);
-      throw new Error(data.error || "Failed to update reminder");
+      let errData: any = {};
+      try {
+        errData = await safeJson(res);
+      } catch (e: any) {
+        throw new Error(e.message || `Failed to update reminder (HTTP ${res.status})`);
+      }
+      throw new Error(errData.error || "Failed to update reminder");
     }
-    return data;
+    return await safeJson(res);
   } catch (err) {
     console.error("Supabase update exception in browser:", err);
     throw err;
@@ -50,7 +88,14 @@ export async function deleteReminder(id: string): Promise<void> {
   const res = await fetch(`/api/reminders/${id}`, {
     method: "DELETE",
   });
-  if (!res.ok) throw new Error("Failed to delete reminder");
+  if (!res.ok) {
+    try {
+      const errData = await safeJson(res);
+      throw new Error(errData.error || `Failed to delete reminder (HTTP ${res.status})`);
+    } catch (e: any) {
+      throw new Error(e.message || `Failed to delete reminder (HTTP ${res.status})`);
+    }
+  }
 }
 
 export async function bulkUploadReminders(reminders: Omit<Reminder, "id">[]): Promise<{ count: number; reminders: Reminder[] }> {
@@ -59,14 +104,28 @@ export async function bulkUploadReminders(reminders: Omit<Reminder, "id">[]): Pr
     headers: { "Content-Type": "application/json" },
     body: JSON.stringify(reminders),
   });
-  if (!res.ok) throw new Error("Failed to bulk upload reminders");
-  return res.json();
+  if (!res.ok) {
+    try {
+      const errData = await safeJson(res);
+      throw new Error(errData.error || `Failed to bulk upload reminders (HTTP ${res.status})`);
+    } catch (e: any) {
+      throw new Error(e.message || `Failed to bulk upload reminders (HTTP ${res.status})`);
+    }
+  }
+  return safeJson(res);
 }
 
 export async function fetchGlobalConfig(): Promise<GlobalConfig> {
   const res = await fetch("/api/config");
-  if (!res.ok) throw new Error("Failed to fetch global config");
-  return res.json();
+  if (!res.ok) {
+    try {
+      const errData = await safeJson(res);
+      throw new Error(errData.error || `Failed to fetch global config (HTTP ${res.status})`);
+    } catch (e: any) {
+      throw new Error(e.message || `Failed to fetch global config (HTTP ${res.status})`);
+    }
+  }
+  return safeJson(res);
 }
 
 export async function updateGlobalConfig(config: Partial<GlobalConfig>): Promise<GlobalConfig> {
@@ -75,21 +134,42 @@ export async function updateGlobalConfig(config: Partial<GlobalConfig>): Promise
     headers: { "Content-Type": "application/json" },
     body: JSON.stringify(config),
   });
-  if (!res.ok) throw new Error("Failed to update global config");
-  return res.json();
+  if (!res.ok) {
+    try {
+      const errData = await safeJson(res);
+      throw new Error(errData.error || `Failed to update global config (HTTP ${res.status})`);
+    } catch (e: any) {
+      throw new Error(e.message || `Failed to update global config (HTTP ${res.status})`);
+    }
+  }
+  return safeJson(res);
 }
 
 export async function fetchNotificationLogs(): Promise<NotificationLog[]> {
   const res = await fetch("/api/logs");
-  if (!res.ok) throw new Error("Failed to fetch notification logs");
-  return res.json();
+  if (!res.ok) {
+    try {
+      const errData = await safeJson(res);
+      throw new Error(errData.error || `Failed to fetch notification logs (HTTP ${res.status})`);
+    } catch (e: any) {
+      throw new Error(e.message || `Failed to fetch notification logs (HTTP ${res.status})`);
+    }
+  }
+  return safeJson(res);
 }
 
 export async function clearNotificationLogs(): Promise<void> {
   const res = await fetch("/api/logs/clear", {
     method: "POST",
   });
-  if (!res.ok) throw new Error("Failed to clear notification logs");
+  if (!res.ok) {
+    try {
+      const errData = await safeJson(res);
+      throw new Error(errData.error || `Failed to clear notification logs (HTTP ${res.status})`);
+    } catch (e: any) {
+      throw new Error(e.message || `Failed to clear notification logs (HTTP ${res.status})`);
+    }
+  }
 }
 
 export async function sendTestEmail(email: string): Promise<{ success: boolean; email: string; logEntry: NotificationLog }> {
@@ -99,10 +179,15 @@ export async function sendTestEmail(email: string): Promise<{ success: boolean; 
     body: JSON.stringify({ email }),
   });
   if (!res.ok) {
-    const errData = await res.json().catch(() => ({}));
+    let errData: any = {};
+    try {
+      errData = await safeJson(res);
+    } catch (e: any) {
+      throw new Error(e.message || `Failed to send test email (HTTP ${res.status})`);
+    }
     throw new Error(errData.error || "Failed to send test email");
   }
-  return res.json();
+  return safeJson(res);
 }
 
 export interface DatabaseStatus {
@@ -113,8 +198,15 @@ export interface DatabaseStatus {
 
 export async function fetchDatabaseStatus(): Promise<DatabaseStatus> {
   const res = await fetch("/api/status");
-  if (!res.ok) throw new Error("Failed to fetch database status");
-  return res.json();
+  if (!res.ok) {
+    try {
+      const errData = await safeJson(res);
+      throw new Error(errData.error || `Failed to fetch database status (HTTP ${res.status})`);
+    } catch (e: any) {
+      throw new Error(e.message || `Failed to fetch database status (HTTP ${res.status})`);
+    }
+  }
+  return safeJson(res);
 }
 
 export interface SimulationResult {
@@ -134,6 +226,13 @@ export async function runTriggerSimulation(date: string, triggerEmails: boolean)
     headers: { "Content-Type": "application/json" },
     body: JSON.stringify({ date, triggerEmails }),
   });
-  if (!res.ok) throw new Error("Failed to run trigger simulation");
-  return res.json();
+  if (!res.ok) {
+    try {
+      const errData = await safeJson(res);
+      throw new Error(errData.error || `Failed to run trigger simulation (HTTP ${res.status})`);
+    } catch (e: any) {
+      throw new Error(e.message || `Failed to run trigger simulation (HTTP ${res.status})`);
+    }
+  }
+  return safeJson(res);
 }

@@ -388,6 +388,19 @@ export default function Chatbot({ reminders, chatbotLogo }: ChatbotProps) {
         if (!response.ok) {
           throw new Error(`Server returned HTTP ${response.status}`);
         }
+        
+        const contentType = response.headers.get("content-type");
+        if (!contentType || !contentType.includes("application/json")) {
+          setAiStatus({
+            loaded: true,
+            geminiConfigured: false,
+            error: "Received HTML/text response instead of JSON status. The custom full-stack backend router might not be running or is routed to index.html.",
+            isStaticSiteError: true,
+            isSleepingError: false
+          });
+          return;
+        }
+
         const data = await response.json();
         setAiStatus({
           loaded: true,
@@ -529,6 +542,12 @@ export default function Chatbot({ reminders, chatbotLogo }: ChatbotProps) {
           history: chatHistory
         })
       });
+
+      const contentType = response.headers.get("content-type");
+      if (!contentType || !contentType.includes("application/json")) {
+        const textSample = await response.text().then(t => t.substring(0, 120).trim()).catch(() => "Empty response");
+        throw new Error(`Server returned a non-JSON response (HTTP ${response.status}). If you deployed on Vercel/Render as a Static Site instead of a full-stack Web Service, the backend routes are unreachable.\nDetails: "${textSample}"`);
+      }
 
       if (!response.ok) {
         const errorData = await response.json().catch(() => ({}));

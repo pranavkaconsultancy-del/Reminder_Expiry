@@ -240,6 +240,12 @@ export default function VoiceCommandButton({
                 body: JSON.stringify({ fileBase64, mimeType })
               });
 
+              const contentType = res.headers.get("content-type");
+              if (!contentType || !contentType.includes("application/json")) {
+                const textSample = await res.text().then(t => t.substring(0, 100).trim()).catch(() => "Empty response");
+                throw new Error(`API returned an unexpected non-JSON response (HTTP ${res.status}). Detail: "${textSample}"`);
+              }
+
               if (!res.ok) {
                 throw new Error("Failed to transcribe audio from API");
               }
@@ -306,6 +312,12 @@ export default function VoiceCommandButton({
         body: JSON.stringify({ text })
       });
 
+      const contentType = res.headers.get("content-type");
+      if (!contentType || !contentType.includes("application/json")) {
+        const textSample = await res.text().then(t => t.substring(0, 100).trim()).catch(() => "Empty response");
+        throw new Error(`API returned an unexpected non-JSON response (HTTP ${res.status}). Detail: "${textSample}"`);
+      }
+
       if (!res.ok) {
         throw new Error("Failed to parse command from AI");
       }
@@ -336,7 +348,9 @@ export default function VoiceCommandButton({
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({ question })
       });
-      if (res.ok) {
+
+      const contentType = res.headers.get("content-type");
+      if (res.ok && contentType && contentType.includes("application/json")) {
         const data = await res.json();
         setAnswerText(data.answer);
       } else {
