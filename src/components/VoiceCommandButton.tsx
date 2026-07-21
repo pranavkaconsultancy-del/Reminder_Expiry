@@ -319,7 +319,8 @@ export default function VoiceCommandButton({
       }
 
       if (!res.ok) {
-        throw new Error("Failed to parse command from AI");
+        const errData = await res.json().catch(() => ({}));
+        throw new Error(errData.error || "Failed to parse command from AI");
       }
 
       const parsed = await res.json();
@@ -573,10 +574,16 @@ export default function VoiceCommandButton({
 
     if (isProcessing) {
       return (
-        <div className="flex flex-col items-center justify-center py-12 text-center">
+        <div className="flex flex-col items-center justify-center py-10 text-center px-4">
           <Loader2 className="w-10 h-10 text-indigo-600 animate-spin mb-4" />
           <h3 className="text-sm font-semibold text-gray-900">Understanding Command...</h3>
-          <p className="text-xs text-gray-400 mt-1">Analyzing your spoken intent and extracting parameters</p>
+          <p className="text-xs text-gray-400 mt-1 mb-4">Analyzing your spoken intent and extracting parameters</p>
+          {transcription && (
+            <div className="w-full p-3.5 bg-blue-50 border border-blue-100 rounded-2xl text-left">
+              <p className="text-[10px] font-bold text-blue-600 uppercase tracking-wider">Raw Transcription:</p>
+              <p className="text-xs italic text-gray-700 mt-1.5 font-semibold">"{transcription}"</p>
+            </div>
+          )}
         </div>
       );
     }

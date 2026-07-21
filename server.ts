@@ -2099,7 +2099,12 @@ app.post("/api/ai/transcribe-voice", async (req, res) => {
 
     const response = await ai.models.generateContent({
       model: "gemini-3.5-flash",
-      contents: [filePart, prompt]
+      contents: {
+        parts: [
+          filePart,
+          { text: prompt }
+        ]
+      }
     });
 
     const text = response.text || "";
@@ -2212,7 +2217,12 @@ If required fields for a command are missing, specify them in the missingFields 
       }
     });
 
-    const parsedResult = JSON.parse(response.text || "{}");
+    let rawText = response.text || "{}";
+    rawText = rawText.trim();
+    if (rawText.startsWith("```")) {
+      rawText = rawText.replace(/^```json\s*/i, "").replace(/```$/, "").trim();
+    }
+    const parsedResult = JSON.parse(rawText);
     res.json(parsedResult);
   } catch (err: any) {
     console.error("[AI Parse Command Error]:", err);
