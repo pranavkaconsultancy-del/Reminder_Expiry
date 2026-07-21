@@ -2147,13 +2147,14 @@ Determine if it matches one of these structured commands:
 
 If the user's intent doesn't match any of the above (e.g. it is a question about a reminder like "what is overdue?" or "how are things looking?" or a general conversational query), classify commandType as "question".
 
-Today's local date is: ${new Date().toISOString().split("T")[0]}. Use this to resolve relative dates (like "next Monday", "in 3 weeks", "by end of this month") into exact YYYY-MM-DD strings.
+Today's local date is: ${new Date().toISOString().split("T")[0]}. Use this to resolve relative dates (like "next Monday", "in 3 weeks", "by end of this month", "15 August 2027") into exact YYYY-MM-DD strings.
 
 For "create" commands:
-- responsibleName should default to "Pranav K" if not specified.
-- responsibleEmail should default to "pranavk.aconsultancy@gmail.com" if responsibleName is "Pranav K" and not specified, or be extracted if mentioned.
-- category: match or choose one of the closest categories if mentioned.
 - itemName: extract the exact or clean name of the reminder.
+- expiryDate: MUST be extracted as an exact YYYY-MM-DD string. Under no circumstances should any date (e.g., "2027-08-15") be appended, prefixed, or added to the responsibleName! Keep expiryDate as a separate field entirely.
+- responsibleName: should default to "Pranav K" if not specified. Do not append, concatenate, or combine any date text, years, or numbers into this field. It must only contain the person's name (e.g., "Pranav K").
+- responsibleEmail: should default to "pranavk.aconsultancy@gmail.com" if responsibleName is "Pranav K" and not specified, or be extracted if mentioned.
+- category: match or choose one of the closest categories if mentioned.
 - notes: include any extra description.
 - customer_name: extract the customer or client name if mentioned (e.g., if they say "for customer ACME Corp" or "client Neemrana Kulkarni").
 - customer_email: extract any customer or client email address if mentioned.
