@@ -401,12 +401,8 @@ export default function App() {
       {/* Sidebar navigation */}
       <aside className={`fixed inset-y-0 left-0 z-40 w-64 bg-[#0F1F3D] border-r border-[#1E2E4A]/30 flex flex-col transition-transform duration-300 transform md:translate-x-0 ${isSidebarOpen ? "translate-x-0" : "-translate-x-full"}`}>
         {/* Header Branding */}
-        <div className="h-16 flex items-center gap-2.5 px-6 border-b border-[#1E2E4A]/40 bg-[#0B172E]">
-          <SyncAILogo variant="icon" className="h-7 w-7" />
-          <div className="flex items-baseline font-sans">
-            <span className="text-lg font-extrabold text-white tracking-tight">Sync</span>
-            <span className="text-lg font-black text-[#0EA5B7] tracking-tight pr-1">AI</span>
-          </div>
+        <div className="h-16 flex items-center px-6 border-b border-[#1E2E4A]/40 bg-[#0B172E]">
+          <span className="text-sm font-bold text-white tracking-wide">SyncAI Consultancy Pvt. Ltd.</span>
         </div>
 
         {/* Navigation Items list */}
@@ -463,24 +459,9 @@ export default function App() {
             >
               <Menu className="w-5 h-5" />
             </button>
-            <div className="hidden md:flex items-center gap-2">
-              {dbStatus && (
-                <span
-                  className={`px-2 py-0.5 rounded text-[9px] font-extrabold uppercase tracking-widest border select-none ${
-                    dbStatus.database === "supabase"
-                      ? "bg-emerald-500/10 border-emerald-400/30 text-emerald-100"
-                      : "bg-amber-500/10 border-amber-400/30 text-amber-100"
-                  }`}
-                  title={
-                    dbStatus.database === "supabase"
-                      ? "Connected to Supabase PostgreSQL database successfully!"
-                      : "Running in local storage fallback mode."
-                  }
-                >
-                  DB: {dbStatus.database}
-                </span>
-              )}
-            </div>
+            <span className="text-sm font-bold text-white tracking-wide md:hidden whitespace-nowrap">
+              SyncAI Consultancy Pvt. Ltd.
+            </span>
           </div>
 
           {/* Glassy Search bar in the center */}
