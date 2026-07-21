@@ -151,7 +151,7 @@ export default function CalendarView({ reminders, onEdit }: CalendarViewProps) {
       {/* Calendar Header with Navigation */}
       <div className="flex flex-col sm:flex-row items-center justify-between gap-4 border-b border-gray-100 pb-5">
         <div className="flex items-center gap-3">
-          <div className="p-2.5 bg-blue-50 text-blue-600 rounded-2xl">
+          <div className="p-2.5 bg-cyan-50 text-cyan-600 rounded-2xl">
             <Calendar className="w-5 h-5" />
           </div>
           <div>

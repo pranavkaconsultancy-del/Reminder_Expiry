@@ -26,7 +26,20 @@ import {
 import { Reminder, GlobalConfig } from "../types";
 import { DatabaseStatus } from "../lib/api";
 import SyncAILogo from "./SyncAILogo";
+import { LOGO_BASE64 as SYNC_AI_LOGO } from "../assets/image/logo";
 import { jsPDF } from "jspdf";
+import {
+  ResponsiveContainer,
+  BarChart,
+  Bar,
+  XAxis,
+  YAxis,
+  CartesianGrid,
+  Tooltip,
+  Legend,
+  AreaChart,
+  Area
+} from "recharts";
 
 interface DashboardProps {
   reminders: Reminder[];
@@ -39,6 +52,8 @@ interface DashboardProps {
   onQuickRenew: (id: string, newExpiry: string, newRenewal: string, notes: string, historyEntry?: any) => Promise<void>;
   onSaveDirect: (formData: Omit<Reminder, "id">) => Promise<void>;
   onAddCategory: (category: string) => void;
+  searchTerm?: string;
+  onSearchTermChange?: (val: string) => void;
 }
 
 type SortField = "itemName" | "category" | "responsibleName" | "expiryDate" | "status";
@@ -78,6 +93,64 @@ function calculateNewExpiry(currentExpiryStr: string, periodStr: string): string
   return `${ny}-${nm}-${nd}`;
 }
 
+/**
+ * Utility to dynamically convert a Base64 encoded SVG to a high-quality PNG Data URL.
+ * This is used to bypass jsPDF's lack of native SVG support in addImage, avoiding the
+ * "wrong PNG signature" error.
+ */
+function convertSvgToPng(svgBase64: string, targetWidth = 1080, targetHeight = 1080): Promise<string> {
+  return new Promise((resolve, reject) => {
+    try {
+      if (!svgBase64) {
+        reject(new Error("SVG base64 string is empty"));
+        return;
+      }
+      
+      const img = new Image();
+      img.crossOrigin = "anonymous";
+      
+      img.onload = () => {
+        try {
+          const canvas = document.createElement("canvas");
+          canvas.width = targetWidth;
+          canvas.height = targetHeight;
+          const ctx = canvas.getContext("2d");
+          if (!ctx) {
+            reject(new Error("Failed to get 2D context from canvas"));
+            return;
+          }
+          
+          // Clear with white background (matching the PDF cover page background)
+          ctx.fillStyle = "#ffffff";
+          ctx.fillRect(0, 0, targetWidth, targetHeight);
+          
+          // Draw the SVG image onto the canvas
+          ctx.drawImage(img, 0, 0, targetWidth, targetHeight);
+          
+          // Export as PNG
+          const pngDataUrl = canvas.toDataURL("image/png");
+          
+          if (pngDataUrl && pngDataUrl.startsWith("data:image/png;base64,")) {
+            resolve(pngDataUrl);
+          } else {
+            reject(new Error("Generated output is not a valid PNG data URL"));
+          }
+        } catch (err) {
+          reject(err);
+        }
+      };
+      
+      img.onerror = (err) => {
+        reject(new Error("Failed to load SVG as HTMLImageElement"));
+      };
+      
+      img.src = svgBase64;
+    } catch (err) {
+      reject(err);
+    }
+  });
+}
+
 export default function Dashboard({
   reminders,
   categories,
@@ -88,10 +161,14 @@ export default function Dashboard({
   onDelete,
   onQuickRenew,
   onSaveDirect,
-  onAddCategory
+  onAddCategory,
+  searchTerm: parentSearchTerm,
+  onSearchTermChange
 }: DashboardProps) {
   // Search & Filtering States
-  const [searchTerm, setSearchTerm] = useState("");
+  const [localSearchTerm, setLocalSearchTerm] = useState("");
+  const searchTerm = parentSearchTerm !== undefined ? parentSearchTerm : localSearchTerm;
+  const setSearchTerm = onSearchTermChange !== undefined ? onSearchTermChange : setLocalSearchTerm;
   const [selectedCategory, setSelectedCategory] = useState("");
   const [selectedPerson, setSelectedPerson] = useState("");
   const [selectedStatus, setSelectedStatus] = useState("");
@@ -189,6 +266,14 @@ export default function Dashboard({
     setIsGeneratingPdf(true);
     setPdfError(null);
     try {
+      // Dynamic conversion of the base64 SVG logo to base64 PNG format to avoid the "wrong PNG signature" error
+      let pngLogo: string | null = null;
+      try {
+        pngLogo = await convertSvgToPng(SYNC_AI_LOGO);
+      } catch (logoErr) {
+        console.warn("Could not dynamically convert SVG logo to PNG for PDF header, proceeding without logo image:", logoErr);
+      }
+
       const doc = new jsPDF({
         orientation: "portrait",
         unit: "mm",
@@ -198,111 +283,123 @@ export default function Dashboard({
       // Total Pages placeholder string we'll replace later
       const TOTAL_PAGES_PLACEHOLDER = "___";
 
-      const drawHeader = () => {
+      const drawHeader = (isCoverPage: boolean = false) => {
         // --- LOGO & HEADER ---
         const logoX = 15;
         const logoY = 13;
         
-        // Connection lines (Teal/Blue)
-        doc.setDrawColor(26, 110, 142); 
-        doc.setLineWidth(0.4);
-        
-        // Define molecular nodes (relative to logoX, logoY)
-        const nodes = [
-          { x: 2, y: 5 },
-          { x: 8, y: 2 },
-          { x: 13, y: 3.5 },
-          { x: 4.5, y: 10 },
-          { x: 12.5, y: 12 },
-          { x: 1, y: 14.5 },
-          { x: 3, y: 17.5 },
-          { x: 9.5, y: 19 },
-        ];
+        if (isCoverPage) {
+          if (pngLogo) {
+            try {
+              doc.addImage(pngLogo, "PNG", 20, 15, 65, 28.15);
+            } catch (addImageErr) {
+              console.error("Failed to add PNG logo image to PDF:", addImageErr);
+            }
+          } else {
+            console.warn("SVG logo conversion to PNG failed or was null; skipping header logo image rendering.");
+          }
+        } else {
+          // Connection lines (Teal/Blue)
+          doc.setDrawColor(26, 110, 142); 
+          doc.setLineWidth(0.4);
+          
+          // Define molecular nodes (relative to logoX, logoY)
+          const nodes = [
+            { x: 2, y: 5 },
+            { x: 8, y: 2 },
+            { x: 13, y: 3.5 },
+            { x: 4.5, y: 10 },
+            { x: 12.5, y: 12 },
+            { x: 1, y: 14.5 },
+            { x: 3, y: 17.5 },
+            { x: 9.5, y: 19 },
+          ];
 
-        // Draw connection lines between nodes
-        doc.line(logoX + nodes[0].x, logoY + nodes[0].y, logoX + nodes[1].x, logoY + nodes[1].y);
-        doc.line(logoX + nodes[0].x, logoY + nodes[0].y, logoX + nodes[3].x, logoY + nodes[3].y);
-        doc.line(logoX + nodes[1].x, logoY + nodes[1].y, logoX + nodes[3].x, logoY + nodes[3].y);
-        doc.line(logoX + nodes[1].x, logoY + nodes[1].y, logoX + nodes[2].x, logoY + nodes[2].y);
-        doc.line(logoX + nodes[2].x, logoY + nodes[2].y, logoX + nodes[4].x, logoY + nodes[4].y);
-        doc.line(logoX + nodes[3].x, logoY + nodes[3].y, logoX + nodes[4].x, logoY + nodes[4].y);
-        doc.line(logoX + nodes[3].x, logoY + nodes[3].y, logoX + nodes[5].x, logoY + nodes[5].y);
-        doc.line(logoX + nodes[4].x, logoY + nodes[4].y, logoX + nodes[5].x, logoY + nodes[5].y);
-        doc.line(logoX + nodes[4].x, logoY + nodes[4].y, logoX + nodes[7].x, logoY + nodes[7].y);
-        doc.line(logoX + nodes[5].x, logoY + nodes[5].y, logoX + nodes[6].x, logoY + nodes[6].y);
-        doc.line(logoX + nodes[5].x, logoY + nodes[5].y, logoX + nodes[7].x, logoY + nodes[7].y);
-        doc.line(logoX + nodes[6].x, logoY + nodes[6].y, logoX + nodes[7].x, logoY + nodes[7].y);
+          // Draw connection lines between nodes
+          doc.line(logoX + nodes[0].x, logoY + nodes[0].y, logoX + nodes[1].x, logoY + nodes[1].y);
+          doc.line(logoX + nodes[0].x, logoY + nodes[0].y, logoX + nodes[3].x, logoY + nodes[3].y);
+          doc.line(logoX + nodes[1].x, logoY + nodes[1].y, logoX + nodes[3].x, logoY + nodes[3].y);
+          doc.line(logoX + nodes[1].x, logoY + nodes[1].y, logoX + nodes[2].x, logoY + nodes[2].y);
+          doc.line(logoX + nodes[2].x, logoY + nodes[2].y, logoX + nodes[4].x, logoY + nodes[4].y);
+          doc.line(logoX + nodes[3].x, logoY + nodes[3].y, logoX + nodes[4].x, logoY + nodes[4].y);
+          doc.line(logoX + nodes[3].x, logoY + nodes[3].y, logoX + nodes[5].x, logoY + nodes[5].y);
+          doc.line(logoX + nodes[4].x, logoY + nodes[4].y, logoX + nodes[5].x, logoY + nodes[5].y);
+          doc.line(logoX + nodes[4].x, logoY + nodes[4].y, logoX + nodes[7].x, logoY + nodes[7].y);
+          doc.line(logoX + nodes[5].x, logoY + nodes[5].y, logoX + nodes[6].x, logoY + nodes[6].y);
+          doc.line(logoX + nodes[5].x, logoY + nodes[5].y, logoX + nodes[7].x, logoY + nodes[7].y);
+          doc.line(logoX + nodes[6].x, logoY + nodes[6].y, logoX + nodes[7].x, logoY + nodes[7].y);
 
-        // Draw nodes
-        const nodeColors = [
-          { r: 17, g: 53, b: 106 }, 
-          { r: 20, g: 77, b: 133 },
-          { r: 11, g: 117, b: 128 }, 
-          { r: 11, g: 117, b: 128 },
-          { r: 12, g: 138, b: 150 },
-          { r: 14, g: 166, b: 118 }, 
-          { r: 16, g: 185, b: 129 },
-          { r: 12, g: 138, b: 150 },
-        ];
+          // Draw nodes
+          const nodeColors = [
+            { r: 17, g: 53, b: 106 }, 
+            { r: 20, g: 77, b: 133 },
+            { r: 11, g: 117, b: 128 }, 
+            { r: 11, g: 117, b: 128 },
+            { r: 12, g: 138, b: 150 },
+            { r: 14, g: 166, b: 118 }, 
+            { r: 16, g: 185, b: 129 },
+            { r: 12, g: 138, b: 150 },
+          ];
 
-        nodes.forEach((node, idx) => {
-          const color = nodeColors[idx];
-          doc.setFillColor(color.r, color.g, color.b);
+          nodes.forEach((node, idx) => {
+            const color = nodeColors[idx];
+            doc.setFillColor(color.r, color.g, color.b);
+            doc.setDrawColor(255, 255, 255);
+            doc.setLineWidth(0.3);
+            doc.circle(logoX + node.x, logoY + node.y, 1.1, "FD");
+          });
+
+          // Text part of Logo
+          doc.setFont("Helvetica", "bold");
+          doc.setFontSize(16);
+          doc.setTextColor(17, 53, 106); 
+          doc.text("Sync", 32, 19);
+
+          doc.setTextColor(11, 117, 128); 
+          doc.text("AI", 46, 19);
+
+          // Radiating AI circular circuit dot
+          doc.setFillColor(14, 166, 118); 
           doc.setDrawColor(255, 255, 255);
-          doc.setLineWidth(0.3);
-          doc.circle(logoX + node.x, logoY + node.y, 1.1, "FD");
-        });
+          doc.setLineWidth(0.2);
+          doc.circle(53, 14, 0.9, "FD");
 
-        // Text part of Logo
-        doc.setFont("Helvetica", "bold");
-        doc.setFontSize(16);
-        doc.setTextColor(17, 53, 106); 
-        doc.text("Sync", 32, 19);
-
-        doc.setTextColor(11, 117, 128); 
-        doc.text("AI", 46, 19);
-
-        // Radiating AI circular circuit dot
-        doc.setFillColor(14, 166, 118); 
-        doc.setDrawColor(255, 255, 255);
-        doc.setLineWidth(0.2);
-        doc.circle(53, 14, 0.9, "FD");
-
-        // Subtitle: "Consultancy Pvt. Ltd."
-        doc.setFont("Helvetica", "bold");
-        doc.setFontSize(5.5);
-        doc.setTextColor(120, 120, 120);
-        doc.text("CONSULTANCY PVT. LTD.", 32, 22.5);
+          // Subtitle: "Consultancy Pvt. Ltd."
+          doc.setFont("Helvetica", "bold");
+          doc.setFontSize(5.5);
+          doc.setTextColor(120, 120, 120);
+          doc.text("CONSULTANCY PVT. LTD.", 32, 22.5);
+        }
 
         // Sub-headline
         doc.setFont("Helvetica", "bold");
         doc.setFontSize(7);
         doc.setTextColor(140, 140, 140);
-        doc.text("COMPLIANCE & OBLIGATION REGISTRY", 15, 28);
+        doc.text("COMPLIANCE & OBLIGATION REGISTRY", 15, isCoverPage ? 41 : 28);
 
         // Right Header Block
         doc.setFont("Helvetica", "bold");
         doc.setFontSize(9);
         doc.setTextColor(50, 50, 50);
-        doc.text("COMPLIANCE DEADLINE REPORT", 195, 17, { align: "right" });
+        doc.text("COMPLIANCE DEADLINE REPORT", 195, isCoverPage ? 20 : 17, { align: "right" });
 
         doc.setFont("Helvetica", "normal");
         doc.setFontSize(7);
         doc.setTextColor(100, 100, 100);
-        doc.text(`Date Generated: ${new Date().toLocaleDateString(undefined, { dateStyle: 'long' })}`, 195, 21, { align: "right" });
+        doc.text(`Date Generated: ${new Date().toLocaleDateString(undefined, { dateStyle: 'long' })}`, 195, isCoverPage ? 25 : 21, { align: "right" });
         
         const scopeText = searchTerm || selectedCategory || selectedStatus || selectedPerson ? "Filtered Subset" : "All System Obligations";
-        doc.text(`Scope: ${scopeText}`, 195, 24.5, { align: "right" });
+        doc.text(`Scope: ${scopeText}`, 195, isCoverPage ? 29 : 24.5, { align: "right" });
         
         doc.setFont("Helvetica", "bold");
-        doc.text("Database: ", 175, 28, { align: "right" });
+        doc.text("Database: ", 175, isCoverPage ? 41 : 28, { align: "right" });
         doc.setTextColor(26, 110, 142); 
-        doc.text("Active (Supabase)", 195, 28, { align: "right" });
+        doc.text("Active (Supabase)", 195, isCoverPage ? 41 : 28, { align: "right" });
 
         // Border below header
         doc.setDrawColor(220, 220, 220);
         doc.setLineWidth(0.4);
-        doc.line(15, 31, 195, 31);
+        doc.line(15, isCoverPage ? 45 : 31, 195, isCoverPage ? 45 : 31);
       };
 
       const drawFooter = (pageNumber: number) => {
@@ -319,10 +416,10 @@ export default function Dashboard({
       };
 
       // First page setup
-      drawHeader();
+      drawHeader(true);
 
       // 1. Company Information Section
-      let currentY = 37;
+      let currentY = 52;
       doc.setFillColor(240, 247, 247); 
       doc.setDrawColor(224, 239, 240); 
       doc.setLineWidth(0.3);
@@ -343,7 +440,7 @@ export default function Dashboard({
       doc.text(`${processedReminders.length} of ${reminders.length} Items Listed`, 138, currentY + 10.5);
 
       // 2. Metrics row
-      currentY = 58;
+      currentY = 73;
       const overdueCount = processedReminders.filter(r => getDaysRemainingLocal(r.expiryDate) < 0 || r.status === "Expired").length;
       const soonCount = processedReminders.filter(r => {
         const d = getDaysRemainingLocal(r.expiryDate);
@@ -385,7 +482,7 @@ export default function Dashboard({
       doc.text(String(healthyCount), 142, currentY + 10);
 
       // 3. Table header
-      currentY = 78;
+      currentY = 93;
       doc.setFillColor(243, 244, 246); 
       doc.setDrawColor(229, 231, 235); 
       doc.roundedRect(15, currentY, 180, 8, 1, 1, "FD");
@@ -399,7 +496,7 @@ export default function Dashboard({
       doc.text("RESPONSIBLE PERSON", 145, currentY + 5.5);
       doc.text("STATUS", 182, currentY + 5.5, { align: "center" });
 
-      currentY = 86; 
+      currentY = 101; 
       let currentPage = 1;
 
       // Draw items
@@ -600,6 +697,56 @@ export default function Dashboard({
       const days = getDaysRemainingLocal(r.expiryDate);
       return days < 0 || (days >= 0 && days <= 10);
     });
+  }, [reminders]);
+
+  // Charts Data Calculation
+  const categoryData = useMemo(() => {
+    const counts: Record<string, { total: number; active: number }> = {};
+    categories.forEach(cat => {
+      counts[cat] = { total: 0, active: 0 };
+    });
+    reminders.forEach(r => {
+      const cat = r.category || "Uncategorized";
+      if (!counts[cat]) {
+        counts[cat] = { total: 0, active: 0 };
+      }
+      counts[cat].total += 1;
+      if (r.status === "Active") {
+        counts[cat].active += 1;
+      }
+    });
+    return Object.entries(counts).map(([name, val]) => ({
+      name: name.length > 12 ? name.substring(0, 12) + "..." : name,
+      fullName: name,
+      Active: val.active,
+      Total: val.total,
+    }));
+  }, [reminders, categories]);
+
+  const timelineData = useMemo(() => {
+    const months = ["Jan", "Feb", "Mar", "Apr", "May", "Jun", "Jul", "Aug", "Sep", "Oct", "Nov", "Dec"];
+    const result: Record<string, { month: string; count: number; index: number }> = {};
+    
+    const now = new Date();
+    for (let i = 0; i < 6; i++) {
+      const d = new Date(now.getFullYear(), now.getMonth() + i, 1);
+      const key = `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}`;
+      const label = `${months[d.getMonth()]} ${String(d.getFullYear()).substring(2)}`;
+      result[key] = { month: label, count: 0, index: i };
+    }
+    
+    reminders.forEach(r => {
+      if (!r.expiryDate) return;
+      const parts = r.expiryDate.split("-");
+      if (parts.length >= 2) {
+        const key = `${parts[0]}-${parts[1]}`;
+        if (result[key]) {
+          result[key].count += 1;
+        }
+      }
+    });
+    
+    return Object.values(result).sort((a, b) => a.index - b.index);
   }, [reminders]);
 
   // Summary Metrics Calculations
@@ -932,46 +1079,103 @@ export default function Dashboard({
       {/* 2. Key Performance Cards / Metrics Grid */}
       <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-4">
         {/* Total Obligations */}
-        <div className="bg-white rounded-xl shadow-xs border border-gray-100 p-5 flex items-center justify-between">
-          <div className="space-y-1">
-            <span className="text-xs font-bold text-gray-400 uppercase tracking-wider">Total Obligations</span>
-            <span className="block text-2xl font-black text-gray-900">{metrics.total}</span>
-          </div>
-          <div className="p-3 bg-blue-50 text-blue-600 rounded-xl">
+        <div className="bg-white rounded-xl shadow-md border border-gray-100 p-5 flex items-center gap-4 transition-all hover:shadow-lg">
+          <div className="p-3.5 bg-blue-50 text-blue-600 rounded-xl shrink-0">
             <FileSpreadsheet className="w-6 h-6" />
+          </div>
+          <div className="space-y-0.5">
+            <span className="text-xs font-bold text-gray-400 uppercase tracking-wider block">Total Obligations</span>
+            <span className="text-2xl font-black text-gray-900 leading-none">{metrics.total}</span>
           </div>
         </div>
 
         {/* Overdue */}
-        <div className="bg-white rounded-xl shadow-xs border border-gray-100 p-5 flex items-center justify-between">
-          <div className="space-y-1">
-            <span className="text-xs font-bold text-gray-400 uppercase tracking-wider">Overdue / Expired</span>
-            <span className="block text-2xl font-black text-red-600">{metrics.overdue}</span>
-          </div>
-          <div className="p-3 bg-red-50 text-red-600 rounded-xl">
+        <div className="bg-white rounded-xl shadow-md border border-gray-100 p-5 flex items-center gap-4 transition-all hover:shadow-lg">
+          <div className="p-3.5 bg-orange-50 text-orange-600 rounded-xl shrink-0">
             <ShieldAlert className="w-6 h-6" />
+          </div>
+          <div className="space-y-0.5">
+            <span className="text-xs font-bold text-gray-400 uppercase tracking-wider block">Overdue / Expired</span>
+            <span className="text-2xl font-black text-orange-600 leading-none">{metrics.overdue}</span>
           </div>
         </div>
 
         {/* Due soon */}
-        <div className="bg-white rounded-xl shadow-xs border border-gray-100 p-5 flex items-center justify-between">
-          <div className="space-y-1">
-            <span className="text-xs font-bold text-gray-400 uppercase tracking-wider">Due Soon (&le; 30 Days)</span>
-            <span className="block text-2xl font-black text-amber-600">{metrics.soon}</span>
-          </div>
-          <div className="p-3 bg-amber-50 text-amber-500 rounded-xl">
+        <div className="bg-white rounded-xl shadow-md border border-gray-100 p-5 flex items-center gap-4 transition-all hover:shadow-lg">
+          <div className="p-3.5 bg-cyan-50 text-cyan-600 rounded-xl shrink-0">
             <Clock className="w-6 h-6" />
+          </div>
+          <div className="space-y-0.5">
+            <span className="text-xs font-bold text-gray-400 uppercase tracking-wider block">Due Soon (&le; 30 Days)</span>
+            <span className="text-2xl font-black text-cyan-600 leading-none">{metrics.soon}</span>
           </div>
         </div>
 
         {/* Healthy */}
-        <div className="bg-white rounded-xl shadow-xs border border-gray-100 p-5 flex items-center justify-between">
-          <div className="space-y-1">
-            <span className="text-xs font-bold text-gray-400 uppercase tracking-wider">Active &amp; Healthy</span>
-            <span className="block text-2xl font-black text-green-600">{metrics.active}</span>
-          </div>
-          <div className="p-3 bg-green-50 text-green-600 rounded-xl">
+        <div className="bg-white rounded-xl shadow-md border border-gray-100 p-5 flex items-center gap-4 transition-all hover:shadow-lg">
+          <div className="p-3.5 bg-emerald-50 text-emerald-600 rounded-xl shrink-0">
             <CheckCircle className="w-6 h-6" />
+          </div>
+          <div className="space-y-0.5">
+            <span className="text-xs font-bold text-gray-400 uppercase tracking-wider block">Active &amp; Healthy</span>
+            <span className="text-2xl font-black text-emerald-600 leading-none">{metrics.active}</span>
+          </div>
+        </div>
+      </div>
+
+      {/* Visual Analytics / Charts Grid */}
+      <div className="grid grid-cols-1 lg:grid-cols-2 gap-6">
+        {/* Category Comparison Chart */}
+        <div className="bg-white rounded-xl shadow-md border border-gray-100 p-5">
+          <div className="mb-4">
+            <h3 className="text-sm font-bold text-gray-900">Obligations by Category</h3>
+            <p className="text-[11px] text-gray-400">Comparison of Active vs. Total obligations across standard compliance areas</p>
+          </div>
+          <div className="h-64 w-full text-xs">
+            <ResponsiveContainer width="100%" height="100%">
+              <BarChart data={categoryData} margin={{ top: 10, right: 10, left: -20, bottom: 0 }}>
+                <CartesianGrid strokeDasharray="3 3" stroke="#F1F5F9" />
+                <XAxis dataKey="name" stroke="#94A3B8" fontSize={10} tickLine={false} />
+                <YAxis stroke="#94A3B8" fontSize={10} tickLine={false} />
+                <Tooltip 
+                  contentStyle={{ backgroundColor: "#0F1F3D", borderRadius: "8px", border: "none", color: "#fff" }}
+                  itemStyle={{ color: "#fff" }}
+                  labelStyle={{ fontWeight: "bold", color: "#0EA5B7" }}
+                />
+                <Legend iconType="circle" wrapperStyle={{ fontSize: 10, paddingTop: 10 }} />
+                <Bar dataKey="Active" fill="#0EA5B7" name="Active & Healthy" radius={[4, 4, 0, 0]} />
+                <Bar dataKey="Total" fill="#0F1F3D" name="Total Tracked" radius={[4, 4, 0, 0]} />
+              </BarChart>
+            </ResponsiveContainer>
+          </div>
+        </div>
+
+        {/* Expirations Workload Line Chart */}
+        <div className="bg-white rounded-xl shadow-md border border-gray-100 p-5">
+          <div className="mb-4">
+            <h3 className="text-sm font-bold text-gray-900">Upcoming Expiration Timeline</h3>
+            <p className="text-[11px] text-gray-400">Monthly forecast of workload based on upcoming business compliance deadlines</p>
+          </div>
+          <div className="h-64 w-full text-xs">
+            <ResponsiveContainer width="100%" height="100%">
+              <AreaChart data={timelineData} margin={{ top: 10, right: 10, left: -20, bottom: 0 }}>
+                <defs>
+                  <linearGradient id="colorTeal" x1="0" y1="0" x2="0" y2="1">
+                    <stop offset="5%" stopColor="#0EA5B7" stopOpacity={0.4}/>
+                    <stop offset="95%" stopColor="#0EA5B7" stopOpacity={0.0}/>
+                  </linearGradient>
+                </defs>
+                <CartesianGrid strokeDasharray="3 3" stroke="#F1F5F9" />
+                <XAxis dataKey="month" stroke="#94A3B8" fontSize={10} tickLine={false} />
+                <YAxis stroke="#94A3B8" fontSize={10} tickLine={false} />
+                <Tooltip 
+                  contentStyle={{ backgroundColor: "#0F1F3D", borderRadius: "8px", border: "none", color: "#fff" }}
+                  itemStyle={{ color: "#fff" }}
+                  labelStyle={{ fontWeight: "bold", color: "#0EA5B7" }}
+                />
+                <Area type="monotone" dataKey="count" name="Expirations" stroke="#0EA5B7" strokeWidth={2} fillOpacity={1} fill="url(#colorTeal)" />
+              </AreaChart>
+            </ResponsiveContainer>
           </div>
         </div>
       </div>
@@ -1083,7 +1287,11 @@ export default function Dashboard({
       )}
 
       {/* 5. Core Obligations Structured Table */}
-      <div className="bg-white rounded-xl shadow-xs border border-gray-100 overflow-hidden" id="obligations-table-section">
+      <div className="bg-white rounded-xl shadow-md border border-gray-100 overflow-hidden" id="obligations-table-section">
+        <div className="p-5 border-b border-gray-100 bg-white">
+          <h3 className="text-sm font-bold text-gray-900">Registered Corporate Obligations</h3>
+          <p className="text-[11px] text-gray-400">Detailed list of business compliance tasks, expiration dates, renewal periods, and designated owners</p>
+        </div>
         <div className="overflow-x-auto">
           <table className="w-full text-left text-sm border-collapse">
             <thead className="bg-gray-50/75 border-b border-gray-100 text-gray-500 font-medium text-xs uppercase tracking-wider">
