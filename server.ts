@@ -2478,8 +2478,9 @@ If you are not highly confident about a field (especially a date), return null f
 
     let response;
     try {
+      // Model alias per @google/genai guidelines
       response = await ai.models.generateContent({
-        model: "gemini-2.5-flash",
+        model: "gemini-3.6-flash",
         contents: [filePart, prompt],
         config: {
           responseMimeType: "application/json",
@@ -2547,9 +2548,9 @@ If you are not highly confident about a field (especially a date), return null f
         },
       });
     } catch (genErr: any) {
-      // Fallback model if gemini-2.5-flash is unavailable on user API key
+      // Fallback model alias if primary model alias is unavailable
       response = await ai.models.generateContent({
-        model: "gemini-1.5-flash",
+        model: "gemini-flash-latest",
         contents: [filePart, prompt],
         config: {
           responseMimeType: "application/json"
@@ -2656,7 +2657,7 @@ ${JSON.stringify(simplifiedReminders, null, 2)}`;
     let activeChat;
     try {
       activeChat = ai.chats.create({
-        model: "gemini-2.5-flash",
+        model: "gemini-3.6-flash",
         config: {
           systemInstruction,
         },
@@ -2664,7 +2665,7 @@ ${JSON.stringify(simplifiedReminders, null, 2)}`;
       });
     } catch (chatErr) {
       activeChat = ai.chats.create({
-        model: "gemini-1.5-flash",
+        model: "gemini-flash-latest",
         config: {
           systemInstruction,
         },
@@ -2714,7 +2715,7 @@ app.post("/api/ai/transcribe-voice", async (req, res) => {
     let response;
     try {
       response = await ai.models.generateContent({
-        model: "gemini-2.5-flash",
+        model: "gemini-3.6-flash",
         contents: {
           parts: [
             filePart,
@@ -2724,7 +2725,7 @@ app.post("/api/ai/transcribe-voice", async (req, res) => {
       });
     } catch (genErr) {
       response = await ai.models.generateContent({
-        model: "gemini-1.5-flash",
+        model: "gemini-flash-latest",
         contents: {
           parts: [
             filePart,
@@ -2839,7 +2840,7 @@ If required fields for a command are missing, specify them in the missingFields 
     let response;
     try {
       response = await ai.models.generateContent({
-        model: "gemini-2.5-flash",
+        model: "gemini-3.6-flash",
         contents: prompt,
         config: {
           responseMimeType: "application/json",
@@ -2848,7 +2849,7 @@ If required fields for a command are missing, specify them in the missingFields 
       });
     } catch (genErr) {
       response = await ai.models.generateContent({
-        model: "gemini-1.5-flash",
+        model: "gemini-flash-latest",
         contents: prompt,
         config: {
           responseMimeType: "application/json",
