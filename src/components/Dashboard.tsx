@@ -21,11 +21,15 @@ import {
   ExternalLink,
   User,
   Info,
-  Printer
+  Printer,
+  UploadCloud,
+  Sparkles,
+  FileText
 } from "lucide-react";
 import { Reminder, GlobalConfig } from "../types";
 import { DatabaseStatus } from "../lib/api";
 import SyncAILogo from "./SyncAILogo";
+import DocumentUploadModal from "./DocumentUploadModal";
 import { LOGO_BASE64 as SYNC_AI_LOGO } from "../assets/image/logo";
 import { jsPDF } from "jspdf";
 import {
@@ -215,6 +219,7 @@ export default function Dashboard({
 
   // "+ Add New Reminder" Quick Modal State
   const [isAddModalOpen, setIsAddModalOpen] = useState(false);
+  const [isDocUploadOpen, setIsDocUploadOpen] = useState(false);
 
   // "Export PDF Report" Modal State
   const [isReportOpen, setIsReportOpen] = useState(false);
@@ -224,6 +229,7 @@ export default function Dashboard({
   const [newCategory, setNewCategory] = useState("");
   const [newPerson, setNewPerson] = useState("Pranav K");
   const [newEmail, setNewEmail] = useState("pranavk.aconsultancy@gmail.com");
+  const [newMobile, setNewMobile] = useState("+919876543210");
   const [newExpiry, setNewExpiry] = useState("");
   const [newRenewal, setNewRenewal] = useState("");
   const [newNotes, setNewNotes] = useState("");
@@ -924,6 +930,7 @@ export default function Dashboard({
         category: finalCategory,
         responsibleName: newPerson.trim() || "Pranav K",
         responsibleEmail: newEmail.trim() || "pranavk.aconsultancy@gmail.com",
+        responsibleMobile: newMobile.trim() || undefined,
         expiryDate: newExpiry,
         renewalDate: newRenewal || "",
         notes: newNotes.trim(),
@@ -1247,8 +1254,17 @@ export default function Dashboard({
             </div>
           </div>
 
-          {/* Action Buttons: Add New and Export PDF Report */}
-          <div className="flex items-center gap-2.5 shrink-0 self-end lg:self-auto">
+          {/* Action Buttons: Upload Document, Add New and Export PDF Report */}
+          <div className="flex flex-wrap items-center gap-2.5 shrink-0 self-end lg:self-auto">
+            <button
+              onClick={() => setIsDocUploadOpen(true)}
+              className="flex items-center justify-center gap-1.5 px-4 py-2 bg-indigo-50 hover:bg-indigo-100 text-indigo-700 text-xs font-bold rounded-lg shadow-xs border border-indigo-200 cursor-pointer transition-colors"
+              title="Upload an insurance policy or contract document (PDF/Image) to auto-extract details"
+            >
+              <UploadCloud className="w-4 h-4 text-indigo-600" />
+              Upload Document to Create Reminder
+            </button>
+
             <button
               onClick={() => setIsReportOpen(true)}
               className="flex items-center justify-center gap-1.5 px-4 py-2 bg-white hover:bg-gray-50 text-gray-700 text-xs font-bold rounded-lg shadow-xs border border-gray-200 cursor-pointer transition-all"
@@ -1632,6 +1648,27 @@ export default function Dashboard({
             </div>
 
             <form onSubmit={submitQuickAdd} className="p-5 space-y-4">
+              {/* Document Upload Option */}
+              <div className="p-3 bg-indigo-50/80 border border-indigo-100 rounded-xl flex items-center justify-between">
+                <div className="flex items-center gap-2">
+                  <Sparkles className="w-4 h-4 text-indigo-600 shrink-0" />
+                  <div>
+                    <span className="text-xs font-bold text-indigo-950 block">Have a Policy PDF or Document?</span>
+                    <span className="text-[10px] text-indigo-700">Auto-extract Name, Issue Date & Expiry Date</span>
+                  </div>
+                </div>
+                <button
+                  type="button"
+                  onClick={() => {
+                    setIsAddModalOpen(false);
+                    setIsDocUploadOpen(true);
+                  }}
+                  className="px-3 py-1.5 text-xs font-bold text-white bg-indigo-600 hover:bg-indigo-700 rounded-lg shadow-xs transition shrink-0 flex items-center gap-1"
+                >
+                  <UploadCloud className="w-3.5 h-3.5" /> Upload File
+                </button>
+              </div>
+
               {addError && (
                 <div className="p-3 bg-red-50 border border-red-100 rounded-lg text-xs text-red-700 flex items-start gap-2">
                   <AlertTriangle className="w-4 h-4 text-red-500 shrink-0 mt-0.5" />
@@ -1692,8 +1729,8 @@ export default function Dashboard({
                 )}
               </div>
 
-              {/* Responsible Person & Email */}
-              <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
+              {/* Responsible Person, Email & Mobile */}
+              <div className="grid grid-cols-1 sm:grid-cols-3 gap-3">
                 <div>
                   <label className="block text-[11px] font-bold uppercase tracking-wider text-gray-500 mb-1">
                     Responsible Person
@@ -1724,6 +1761,19 @@ export default function Dashboard({
                       className="w-full pl-8 pr-3 py-1.5 border border-gray-200 rounded-lg focus:outline-none focus:ring-1 focus:ring-blue-500 text-xs text-gray-800"
                     />
                   </div>
+                </div>
+
+                <div>
+                  <label className="block text-[11px] font-bold uppercase tracking-wider text-gray-500 mb-1">
+                    Mobile (SMS)
+                  </label>
+                  <input
+                    type="tel"
+                    value={newMobile}
+                    onChange={(e) => setNewMobile(e.target.value)}
+                    placeholder="+91XXXXXXXXXX"
+                    className="w-full px-3 py-1.5 border border-gray-200 rounded-lg focus:outline-none focus:ring-1 focus:ring-blue-500 text-xs text-gray-800 font-mono"
+                  />
                 </div>
               </div>
 
@@ -2095,6 +2145,15 @@ export default function Dashboard({
           </div>
         </div>
       )}
+
+      {/* 7. Document Upload & AI Review Modal */}
+      <DocumentUploadModal
+        isOpen={isDocUploadOpen}
+        onClose={() => setIsDocUploadOpen(false)}
+        onSave={onSaveDirect}
+        categories={categories}
+        onAddCategory={onAddCategory}
+      />
     </div>
   );
 }

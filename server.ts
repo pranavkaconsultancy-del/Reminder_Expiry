@@ -211,7 +211,9 @@ async function ensureTables() {
             "acknowledged" boolean DEFAULT false,
             "acknowledged_at" text DEFAULT null,
             "customer_name" text DEFAULT null,
-            "customer_email" text DEFAULT null
+            "customer_email" text DEFAULT null,
+            "responsibleMobile" text DEFAULT null,
+            "customer_mobile" text DEFAULT null
           );
         `);
 
@@ -227,6 +229,12 @@ async function ensureTables() {
         `);
         await client.query(`
           ALTER TABLE reminders ADD COLUMN IF NOT EXISTS "customer_email" text DEFAULT null;
+        `);
+        await client.query(`
+          ALTER TABLE reminders ADD COLUMN IF NOT EXISTS "responsibleMobile" text DEFAULT null;
+        `);
+        await client.query(`
+          ALTER TABLE reminders ADD COLUMN IF NOT EXISTS "customer_mobile" text DEFAULT null;
         `);
 
         // 3. Create LOGS table
@@ -244,7 +252,9 @@ async function ensureTables() {
             "errorDetail" text,
             "emailSubject" text NOT NULL,
             "emailBody" text NOT NULL,
-            "recipientType" text DEFAULT null
+            "recipientType" text DEFAULT null,
+            "channel" text DEFAULT 'Email',
+            "recipientMobile" text DEFAULT null
           );
         `);
 
@@ -252,8 +262,30 @@ async function ensureTables() {
         await client.query(`
           ALTER TABLE logs ADD COLUMN IF NOT EXISTS "recipientType" text DEFAULT null;
         `);
+        await client.query(`
+          ALTER TABLE logs ADD COLUMN IF NOT EXISTS "channel" text DEFAULT 'Email';
+        `);
+        await client.query(`
+          ALTER TABLE logs ADD COLUMN IF NOT EXISTS "recipientMobile" text DEFAULT null;
+        `);
 
-        // 4. Seed default configuration
+        // 4. Create APP_CREDENTIALS table (RLS enabled, restricted access)
+        await client.query(`
+          CREATE TABLE IF NOT EXISTS app_credentials (
+            key text PRIMARY KEY,
+            account_sid text,
+            auth_token text,
+            phone_number text,
+            updated_at text
+          );
+        `);
+        try {
+          await client.query(`ALTER TABLE app_credentials ENABLE ROW LEVEL SECURITY;`);
+        } catch (rlsErr) {
+          // ignore if RLS already enabled
+        }
+
+        // 5. Seed default configuration
         await client.query(`
           INSERT INTO config (key, "defaultRules", "categories", "categoryRenewalPeriods")
           VALUES (
@@ -365,6 +397,7 @@ async function saveReminder(reminder: any, mode: 'insert' | 'update' | 'upsert' 
         category: reminder.category,
         responsibleName: reminder.responsibleName,
         responsibleEmail: reminder.responsibleEmail,
+        responsibleMobile: reminder.responsibleMobile || reminder.responsible_mobile || null,
         expiryDate: reminder.expiryDate,
         renewalDate: reminder.renewalDate || '',
         status: reminder.status || 'Active',
@@ -375,7 +408,8 @@ async function saveReminder(reminder: any, mode: 'insert' | 'update' | 'upsert' 
         acknowledged: reminder.acknowledged === true || reminder.acknowledged === 'true',
         acknowledged_at: reminder.acknowledged_at || reminder.acknowledgedAt || null,
         customer_name: reminder.customer_name || reminder.customerName || null,
-        customer_email: reminder.customer_email || reminder.customerEmail || null
+        customer_email: reminder.customer_email || reminder.customerEmail || null,
+        customer_mobile: reminder.customer_mobile || reminder.customerMobile || null
       };
 
       let query;
@@ -430,9 +464,9 @@ async function saveReminder(reminder: any, mode: 'insert' | 'update' | 'upsert' 
         id, "itemName", category, "responsibleName", "responsibleEmail", 
         "expiryDate", "renewalDate", status, notes, "rulesOverride", 
         "renewalHistory", "renewalPeriodOverride", acknowledged, "acknowledged_at",
-        "customer_name", "customer_email"
+        "customer_name", "customer_email", "responsibleMobile", "customer_mobile"
       )
-      VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16)
+      VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16, $17, $18)
       ON CONFLICT (id) DO UPDATE SET
         "itemName" = EXCLUDED."itemName",
         category = EXCLUDED.category,
@@ -448,7 +482,9 @@ async function saveReminder(reminder: any, mode: 'insert' | 'update' | 'upsert' 
         acknowledged = EXCLUDED.acknowledged,
         "acknowledged_at" = EXCLUDED."acknowledged_at",
         "customer_name" = EXCLUDED."customer_name",
-        "customer_email" = EXCLUDED."customer_email";
+        "customer_email" = EXCLUDED."customer_email",
+        "responsibleMobile" = EXCLUDED."responsibleMobile",
+        "customer_mobile" = EXCLUDED."customer_mobile";
     `, [
       reminder.id,
       reminder.itemName,
@@ -465,7 +501,9 @@ async function saveReminder(reminder: any, mode: 'insert' | 'update' | 'upsert' 
       reminder.acknowledged === true || reminder.acknowledged === 'true',
       reminder.acknowledged_at || reminder.acknowledgedAt || null,
       reminder.customer_name || reminder.customerName || null,
-      reminder.customer_email || reminder.customerEmail || null
+      reminder.customer_email || reminder.customerEmail || null,
+      reminder.responsibleMobile || reminder.responsible_mobile || null,
+      reminder.customer_mobile || reminder.customerMobile || null
     ]), 2500);
   } catch (err) {
     console.log("[PostgreSQL Status] Saving reminder exception: fallback activated (Info: " + (err instanceof Error ? err.message : String(err)) + ")");
@@ -786,7 +824,9 @@ async function saveLog(log: any): Promise<void> {
         errorDetail: log.errorDetail || null,
         emailSubject: log.emailSubject,
         emailBody: log.emailBody,
-        recipientType: log.recipientType || 'responsible'
+        recipientType: log.recipientType || 'responsible',
+        channel: log.channel || 'Email',
+        recipientMobile: log.recipientMobile || log.recipient_mobile || null
       };
       const { error } = await runWithTimeout(s.from('logs').insert(payload), 2500);
       if (!error) {
@@ -818,9 +858,9 @@ async function saveLog(log: any): Promise<void> {
       INSERT INTO logs (
         id, "reminderId", "reminderName", "recipientName", "recipientEmail", 
         "triggerType", "triggerDate", "sentAt", status, "errorDetail", 
-        "emailSubject", "emailBody", "recipientType"
+        "emailSubject", "emailBody", "recipientType", "channel", "recipientMobile"
       )
-      VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13);
+      VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15);
     `, [
       log.id,
       log.reminderId,
@@ -834,7 +874,9 @@ async function saveLog(log: any): Promise<void> {
       log.errorDetail || null,
       log.emailSubject,
       log.emailBody,
-      log.recipientType || 'responsible'
+      log.recipientType || 'responsible',
+      log.channel || 'Email',
+      log.recipientMobile || log.recipient_mobile || null
     ]), 2500);
   } catch (err) {
     console.log("[PostgreSQL Status] Saving log exception: fallback activated (Info: " + (err instanceof Error ? err.message : String(err)) + ")");
@@ -951,7 +993,371 @@ function checkRuleMatch(reminder: any, rule: string, targetStr: string): boolean
   }
 }
 
-// Core function to check reminders and send emails
+let localSmsCredentials: {
+  accountSid: string;
+  authToken: string;
+  phoneNumber: string;
+} | null = null;
+
+try {
+  const fs = require("fs");
+  const path = require("path");
+  const credPath = path.join(process.cwd(), "sms_credentials.json");
+  if (fs.existsSync(credPath)) {
+    localSmsCredentials = JSON.parse(fs.readFileSync(credPath, "utf-8"));
+  }
+} catch (e) {
+  // ignore
+}
+
+async function getSmsCredentials(): Promise<{
+  accountSid: string;
+  authToken: string;
+  phoneNumber: string;
+  source: "database" | "file" | "env" | "none";
+}> {
+  // 1. Try PostgreSQL Database
+  const p = getPool();
+  if (p && isPostgresAvailable()) {
+    try {
+      const res = await p.query(`SELECT account_sid, auth_token, phone_number FROM app_credentials WHERE key = 'twilio'`);
+      if (res.rows.length > 0 && res.rows[0].account_sid && res.rows[0].auth_token) {
+        return {
+          accountSid: res.rows[0].account_sid,
+          authToken: res.rows[0].auth_token,
+          phoneNumber: res.rows[0].phone_number || "",
+          source: "database"
+        };
+      }
+    } catch (err) {
+      console.warn("[SMS Credentials] DB read error:", err);
+    }
+  }
+
+  // 2. Try Supabase Client
+  const supa = getSupabaseClient();
+  if (supa && isSupabaseAvailable()) {
+    try {
+      const { data } = await supa.from("app_credentials").select("*").eq("key", "twilio").maybeSingle();
+      if (data && data.account_sid && data.auth_token) {
+        return {
+          accountSid: data.account_sid,
+          authToken: data.auth_token,
+          phoneNumber: data.phone_number || "",
+          source: "database"
+        };
+      }
+    } catch (e) {
+      // ignore
+    }
+  }
+
+  // 3. Try local disk / memory fallback
+  if (localSmsCredentials && localSmsCredentials.accountSid && localSmsCredentials.authToken) {
+    return {
+      ...localSmsCredentials,
+      source: "file"
+    };
+  }
+
+  // 4. Fall back to environment variables
+  const envSid = process.env.TWILIO_ACCOUNT_SID || process.env.TWILIO_SID || process.env.TWILIO_ACCOUNT_ID || "";
+  const envToken = process.env.TWILIO_AUTH_TOKEN || process.env.TWILIO_TOKEN || "";
+  const envPhone = process.env.TWILIO_PHONE_NUMBER || process.env.TWILIO_FROM_NUMBER || process.env.TWILIO_NUMBER || "";
+
+  if (envSid && envToken) {
+    return {
+      accountSid: envSid,
+      authToken: envToken,
+      phoneNumber: envPhone,
+      source: "env"
+    };
+  }
+
+  return {
+    accountSid: "",
+    authToken: "",
+    phoneNumber: "",
+    source: "none"
+  };
+}
+
+async function saveSmsCredentials(creds: { accountSid: string; authToken: string; phoneNumber: string }) {
+  localSmsCredentials = creds;
+  try {
+    const fs = require("fs");
+    const path = require("path");
+    fs.writeFileSync(path.join(process.cwd(), "sms_credentials.json"), JSON.stringify(creds, null, 2), "utf-8");
+  } catch (e) {
+    console.warn("Failed to write sms_credentials.json:", e);
+  }
+
+  const p = getPool();
+  if (p && isPostgresAvailable()) {
+    try {
+      await p.query(
+        `INSERT INTO app_credentials (key, account_sid, auth_token, phone_number, updated_at)
+         VALUES ('twilio', $1, $2, $3, $4)
+         ON CONFLICT (key) DO UPDATE SET
+           account_sid = EXCLUDED.account_sid,
+           auth_token = EXCLUDED.auth_token,
+           phone_number = EXCLUDED.phone_number,
+           updated_at = EXCLUDED.updated_at`,
+        [creds.accountSid, creds.authToken, creds.phoneNumber, new Date().toISOString()]
+      );
+    } catch (err) {
+      console.warn("[SMS Credentials] DB save error:", err);
+    }
+  }
+}
+
+async function validateTwilioCredentials(accountSid: string, authToken: string, phoneNumber?: string): Promise<{ valid: boolean; errorDetail?: string }> {
+  if (!accountSid || !accountSid.trim()) {
+    return { valid: false, errorDetail: "Twilio Account SID is required." };
+  }
+  if (!authToken || !authToken.trim()) {
+    return { valid: false, errorDetail: "Twilio Auth Token is required." };
+  }
+
+  const cleanSid = accountSid.trim();
+  const cleanToken = authToken.trim();
+  const cleanPhone = (phoneNumber || "").trim();
+
+  if (!cleanPhone) {
+    return {
+      valid: false,
+      errorDetail: "Twilio Phone Number is required. Twilio Phone Number must be a number you've purchased in your Twilio Console (Phone Numbers → Manage → Active Numbers)."
+    };
+  }
+
+  const authHeader = "Basic " + Buffer.from(`${cleanSid}:${cleanToken}`).toString("base64");
+
+  // Step 1: Validate Account SID + Auth Token against Twilio Account API
+  try {
+    const response = await fetch(`https://api.twilio.com/2010-04-01/Accounts/${cleanSid}.json`, {
+      method: "GET",
+      headers: {
+        Authorization: authHeader
+      }
+    });
+
+    const data = await response.json();
+    if (!response.ok || !data.sid) {
+      const errMsg = data.message || data.detail || `Twilio error code ${data.code || response.status}`;
+      return { valid: false, errorDetail: `Invalid credentials: ${errMsg}` };
+    }
+  } catch (err: any) {
+    return { valid: false, errorDetail: `Network error reaching Twilio API: ${err.message || String(err)}` };
+  }
+
+  // Step 2: Validate Phone Number Ownership against Twilio IncomingPhoneNumbers API
+  try {
+    const phoneRes = await fetch(`https://api.twilio.com/2010-04-01/Accounts/${cleanSid}/IncomingPhoneNumbers.json?PageSize=100`, {
+      method: "GET",
+      headers: {
+        Authorization: authHeader
+      }
+    });
+
+    const phoneData = await phoneRes.json();
+    if (!phoneRes.ok) {
+      const errMsg = phoneData.message || phoneData.detail || `HTTP ${phoneRes.status}`;
+      return { valid: false, errorDetail: `Failed to verify Twilio phone numbers: ${errMsg}` };
+    }
+
+    const incomingNumbers: any[] = phoneData.incoming_phone_numbers || [];
+    const targetDigits = cleanPhone.replace(/\D/g, "");
+
+    const isMatch = incomingNumbers.some((item: any) => {
+      const itemDigits = (item.phone_number || "").replace(/\D/g, "");
+      return (
+        itemDigits === targetDigits ||
+        (targetDigits.length >= 8 && itemDigits.endsWith(targetDigits)) ||
+        (itemDigits.length >= 8 && targetDigits.endsWith(itemDigits)) ||
+        (item.phone_number && item.phone_number.trim() === cleanPhone)
+      );
+    });
+
+    if (!isMatch) {
+      return {
+        valid: false,
+        errorDetail: "This number isn't a Twilio number on your account. Twilio Phone Number must be a number you've purchased in your Twilio Console (Phone Numbers → Manage → Active Numbers) — not your personal mobile number."
+      };
+    }
+  } catch (err: any) {
+    return { valid: false, errorDetail: `Network error verifying Twilio phone number: ${err.message || String(err)}` };
+  }
+
+  return { valid: true };
+}
+
+async function sendTwilioSMS(toMobile: string, messageBody: string): Promise<{ success: boolean; errorDetail?: string; sid?: string }> {
+  const creds = await getSmsCredentials();
+  const accountSid = creds.accountSid;
+  const authToken = creds.authToken;
+  const messagingServiceSid = process.env.TWILIO_MESSAGING_SERVICE_SID;
+  const fromNumber = creds.phoneNumber || process.env.TWILIO_PHONE_NUMBER || process.env.TWILIO_FROM_NUMBER || process.env.TWILIO_NUMBER;
+
+  if (!accountSid || !authToken || (!messagingServiceSid && !fromNumber)) {
+    return {
+      success: false,
+      errorDetail: "SMS not configured — go to Settings → SMS Settings to add your Twilio credentials."
+    };
+  }
+
+  let cleanTo = toMobile.trim();
+  if (!cleanTo.startsWith("+")) {
+    const digits = cleanTo.replace(/\D/g, "");
+    if (digits.length === 10 && /^[6-9]/.test(digits)) {
+      cleanTo = "+91" + digits;
+    } else if (digits.length === 12 && digits.startsWith("91")) {
+      cleanTo = "+" + digits;
+    } else {
+      cleanTo = "+" + digits;
+    }
+  }
+
+  // Pre-flight check: Twilio disallows 'To' and 'From' numbers to be identical (Error 21266)
+  if (fromNumber) {
+    const cleanToDigits = cleanTo.replace(/\D/g, "");
+    const cleanFromDigits = fromNumber.replace(/\D/g, "");
+    if (
+      cleanToDigits &&
+      cleanFromDigits &&
+      (cleanToDigits === cleanFromDigits ||
+        (cleanToDigits.length >= 8 && cleanFromDigits.endsWith(cleanToDigits)) ||
+        (cleanFromDigits.length >= 8 && cleanToDigits.endsWith(cleanFromDigits)))
+    ) {
+      return {
+        success: false,
+        errorDetail: `SMS couldn't be sent — destination ('To') and sender ('From') phone numbers cannot be the same (${fromNumber}). Please enter a different recipient mobile number (e.g. your personal mobile phone) to test receiving the SMS.`
+      };
+    }
+  }
+
+  try {
+    const url = `https://api.twilio.com/2010-04-01/Accounts/${accountSid}/Messages.json`;
+    const params = new URLSearchParams();
+    params.append("To", cleanTo);
+    params.append("Body", messageBody);
+    if (messagingServiceSid) {
+      params.append("MessagingServiceSid", messagingServiceSid);
+    } else if (fromNumber) {
+      params.append("From", fromNumber);
+    }
+
+    const authHeader = "Basic " + Buffer.from(`${accountSid}:${authToken}`).toString("base64");
+
+    const response = await fetch(url, {
+      method: "POST",
+      headers: {
+        "Authorization": authHeader,
+        "Content-Type": "application/x-www-form-urlencoded"
+      },
+      body: params.toString()
+    });
+
+    const resJson = await response.json();
+
+    if (response.ok && resJson.sid) {
+      return { success: true, sid: resJson.sid };
+    } else {
+      let errText = resJson.message || resJson.detail || JSON.stringify(resJson);
+      const errCode = String(resJson.code || "");
+
+      // Twilio Error 21266: 'To' and 'From' number cannot be the same
+      if (
+        errCode === "21266" ||
+        errText.includes("21266") ||
+        errText.toLowerCase().includes("cannot be the same") ||
+        errText.toLowerCase().includes("'to' and 'from'")
+      ) {
+        return {
+          success: false,
+          errorDetail: "SMS couldn't be sent — destination ('To') and sender ('From') phone numbers cannot be the same. Please enter a different recipient mobile number (e.g. your personal mobile phone) to test receiving the SMS."
+        };
+      }
+
+      if (
+        errCode === "21659" ||
+        errText.includes("21659") ||
+        errText.toLowerCase().includes("is not a twilio phone number") ||
+        errText.toLowerCase().includes("short code country mismatch")
+      ) {
+        return {
+          success: false,
+          errorDetail: "SMS couldn't be sent — the configured Twilio Phone Number isn't valid for sending. Please check SMS Settings and make sure it's an actual number from your Twilio account."
+        };
+      }
+
+      // Twilio Error 21408: Geo-Permissions disabled for destination country (e.g. India)
+      if (errCode === "21408" || errText.includes("21408") || errText.toLowerCase().includes("permission to send an sms has not been enabled")) {
+        return {
+          success: false,
+          errorDetail: "SMS couldn't be sent — Geo-Permissions for India (+91) are not enabled in your Twilio Account. Please log in to Twilio Console → Messaging → Settings → Geo-Permissions and check 'India'."
+        };
+      }
+
+      // Twilio Error 21608 / 21215: Unverified recipient number on Trial Account
+      if (errCode === "21608" || errCode === "21215" || errText.includes("21608") || errText.toLowerCase().includes("unverified")) {
+        return {
+          success: false,
+          errorDetail: "SMS couldn't be sent — on Twilio Trial Accounts, destination numbers must be verified first. Please add this recipient number in Twilio Console → Phone Numbers → Verified Caller IDs."
+        };
+      }
+
+      // Twilio Error 21612 / 21614: Routing error to India / invalid country route
+      if (errCode === "21612" || errCode === "21614" || errText.includes("21612")) {
+        return {
+          success: false,
+          errorDetail: "SMS couldn't be sent — Twilio could not route to this Indian mobile number (+91). Ensure India (+91) Geo-Permissions are enabled in your Twilio Console."
+        };
+      }
+      if (errText.includes("MessagingServiceSid") || errText.includes("21606")) {
+        errText += " — Ensure Twilio Phone Number is configured with a valid sender phone number.";
+      }
+      return { success: false, errorDetail: `Twilio API Error (${resJson.code || response.status}): ${errText}` };
+    }
+  } catch (err: any) {
+    return { success: false, errorDetail: `SMS dispatch exception: ${err.message || String(err)}` };
+  }
+}
+
+function buildSmsDigestText(formattedDateStr: string, items: { name: string; daysRemaining: number }[]): string {
+  const count = items.length;
+  const prefix = `SyncAI Reminder (${formattedDateStr}): ${count} ${count === 1 ? 'item needs' : 'items need'} attention — `;
+  const suffix = `. Check dashboard for details.`;
+
+  const getItemDesc = (item: { name: string; daysRemaining: number }) => {
+    if (item.daysRemaining < 0) {
+      return `${item.name} (OVERDUE ${Math.abs(item.daysRemaining)} days)`;
+    } else if (item.daysRemaining === 0) {
+      return `${item.name} (expires today)`;
+    } else {
+      return `${item.name} (due in ${item.daysRemaining} days)`;
+    }
+  };
+
+  const allDescs = items.map(getItemDesc);
+  const fullText = prefix + allDescs.join(", ") + suffix;
+
+  if (fullText.length <= 155 || count <= 2) {
+    return fullText;
+  }
+
+  for (let showCount = Math.min(3, count - 1); showCount >= 1; showCount--) {
+    const shownDescs = allDescs.slice(0, showCount).join(", ");
+    const remainingCount = count - showCount;
+    const truncatedText = `${prefix}${shownDescs} +${remainingCount} more — check dashboard`;
+    if (truncatedText.length <= 155 || showCount === 1) {
+      return truncatedText;
+    }
+  }
+
+  return fullText;
+}
+
+// Core function to check reminders and send emails and SMS
 async function checkAndSendReminders(targetDateStr: string, triggerEmails = true) {
   const reminders = await getReminders();
   const config = await getConfig();
@@ -967,7 +1373,7 @@ async function checkAndSendReminders(targetDateStr: string, triggerEmails = true
     const daysRemaining = getDaysRemaining(reminder.expiryDate, targetDateStr);
     
     // Check if the item is OVERDUE (daysRemaining < 0) and not yet renewed/acknowledged
-    // We send a daily repeat email for these until they are acknowledged.
+    // We send a daily repeat email and SMS for these until they are acknowledged.
     const isOverdue = daysRemaining < 0;
     const isActuallyOverdue = isOverdue && reminder.status !== "Renewed";
     const isAlreadyAcknowledged = reminder.acknowledged === true || reminder.acknowledged === 'true';
@@ -1191,6 +1597,7 @@ async function checkAndSendReminders(targetDateStr: string, triggerEmails = true
         reminderName: reminder.itemName,
         recipientName: recipient.name,
         recipientEmail: recipient.email,
+        channel: "Email" as const,
         triggerType: rule,
         triggerDate: targetDateStr,
         sentAt: new Date().toISOString(),
@@ -1203,6 +1610,111 @@ async function checkAndSendReminders(targetDateStr: string, triggerEmails = true
 
       newLogs.push(logEntry);
     }
+  }
+
+  // --- SMS Daily Digest Processing ---
+  // Group matches by person mobile number (one SMS per person per day)
+  const smsPersonGroups: Record<string, {
+    name: string;
+    email?: string;
+    mobile: string;
+    isCustomer: boolean;
+    items: { reminder: any; rule: string; daysRemaining: number }[];
+  }> = {};
+
+  for (const match of matches) {
+    const { reminder, rule, daysRemaining } = match;
+
+    // Check Responsible Mobile
+    const respMobile = reminder.responsibleMobile || reminder.responsible_mobile;
+    if (respMobile && respMobile.trim()) {
+      const mobKey = respMobile.trim();
+      if (!smsPersonGroups[mobKey]) {
+        smsPersonGroups[mobKey] = {
+          name: reminder.responsibleName,
+          email: reminder.responsibleEmail,
+          mobile: mobKey,
+          isCustomer: false,
+          items: []
+        };
+      }
+      smsPersonGroups[mobKey].items.push({ reminder, rule, daysRemaining });
+    }
+
+    // Check Customer Mobile
+    const custMobile = reminder.customer_mobile || reminder.customerMobile;
+    if (custMobile && custMobile.trim()) {
+      const mobKey = custMobile.trim();
+      if (!smsPersonGroups[mobKey]) {
+        smsPersonGroups[mobKey] = {
+          name: reminder.customer_name || reminder.customerName || "Customer",
+          email: reminder.customer_email || reminder.customerEmail,
+          mobile: mobKey,
+          isCustomer: true,
+          items: []
+        };
+      }
+      smsPersonGroups[mobKey].items.push({ reminder, rule, daysRemaining });
+    }
+  }
+
+  // Format date label for SMS, e.g., "24 Jul"
+  const targetDateObj = new Date(targetDateStr + "T00:00:00");
+  const smsDateLabel = isNaN(targetDateObj.getTime())
+    ? targetDateStr
+    : targetDateObj.toLocaleDateString("en-GB", { day: "numeric", month: "short" });
+
+  const smsCreds = await getSmsCredentials();
+  const isTwilioConfigured = Boolean(smsCreds.accountSid && smsCreds.authToken);
+
+  for (const mobKey of Object.keys(smsPersonGroups)) {
+    const group = smsPersonGroups[mobKey];
+    if (group.items.length === 0) continue;
+
+    // Sort group items by urgency: overdue first (most overdue first), then expires today, then soonest expiring
+    group.items.sort((a, b) => a.daysRemaining - b.daysRemaining);
+
+    const smsText = buildSmsDigestText(smsDateLabel, group.items.map(i => ({
+      name: i.reminder.itemName,
+      daysRemaining: i.daysRemaining
+    })));
+
+    let smsSuccess = false;
+    let smsErrorDetail = "";
+
+    if (triggerEmails && isTwilioConfigured) {
+      const twResult = await sendTwilioSMS(group.mobile, smsText);
+      smsSuccess = twResult.success;
+      smsErrorDetail = twResult.errorDetail || "";
+    } else {
+      smsSuccess = true;
+      smsErrorDetail = !isTwilioConfigured
+        ? "SMS not configured — go to Settings → SMS Settings to add your Twilio credentials."
+        : "SMS simulation triggered (dry-run mode).";
+      console.log(`[SIMULATION] SMS Digest to ${group.name} (${group.mobile}): "${smsText}"`);
+    }
+
+    const smsLogEntry = {
+      id: "log-sms-" + Date.now() + "-" + Math.random().toString(36).substr(2, 5),
+      reminderId: group.items[0].reminder.id,
+      reminderName: group.items.length === 1 
+        ? group.items[0].reminder.itemName 
+        : `${group.items.length} obligations (${group.items.map(i => i.reminder.itemName).slice(0, 3).join(', ')}${group.items.length > 3 ? '...' : ''})`,
+      recipientName: group.name,
+      recipientEmail: group.email || "N/A",
+      recipientMobile: group.mobile,
+      channel: "SMS" as const,
+      triggerType: group.items[0].rule,
+      triggerDate: targetDateStr,
+      sentAt: new Date().toISOString(),
+      status: smsSuccess ? ("success" as const) : ("failure" as const),
+      errorDetail: smsErrorDetail || undefined,
+      emailSubject: `Daily SMS Digest (${group.items.length} item${group.items.length > 1 ? 's' : ''})`,
+      emailBody: smsText,
+      recipientType: group.isCustomer ? ("customer" as const) : ("responsible" as const)
+    };
+
+    newLogs.push(smsLogEntry);
   }
 
   // Update DB logs
@@ -1909,14 +2421,22 @@ app.post("/api/ai/analyze-document", async (req, res) => {
       "Subscription"
     ];
 
-    const prompt = `Analyze this uploaded document and extract details to auto-fill an Obligation Tracking Form.
-Please find:
-1. itemName: The official title, name, or description of the contract, policy, license, visa, or AMC (e.g. "Allianz General Liability Insurance").
-2. category: Map this document to one of these predefined categories ONLY. Choose the closest one:
+    const prompt = `Analyze this uploaded insurance policy, contract, or compliance document and extract key fields to create a reminder/obligation.
+Extract the following:
+1. itemName: The policy title, contract name, or insurer + policy type (e.g., "AC Service Insurance", "Building Fire Insurance Policy").
+2. createdDate: The policy issue date, effective start date, or inception date shown in the document. Format strictly as YYYY-MM-DD. Return null if not clearly found.
+3. expiryDate: The policy expiration date, renewal due date, or end date shown in the document. Format strictly as YYYY-MM-DD. Return null if not clearly found.
+4. category: Map this document to one of these predefined categories ONLY. Choose the closest one:
    ${categories.map(c => `   - "${c}"`).join("\n")}
-3. expiryDate: The official expiration date, renewal date, or end-of-term date of this contract/document. Format it strictly as YYYY-MM-DD.
+5. responsibleName: Responsible person, agent, or manager name if shown, or null.
+6. responsibleEmail: Responsible email address if shown, or null.
+7. responsibleMobile: Responsible person mobile number in international format (+91XXXXXXXXXX) if shown, or null.
+8. customerName: Policyholder/client/customer name if shown, or null.
+9. customerEmail: Client/customer email if shown, or null.
+10. customerMobile: Client/customer mobile number in international format (+91XXXXXXXXXX) if shown, or null.
+11. notes: A brief 1-2 sentence summary of key coverage or policy terms found, or null.
 
-If you are not highly confident about a field, return null for it. Do not guess.`;
+If you are not highly confident about a field (especially a date), return null for it. Do NOT guess dates!`;
 
     const filePart = {
       inlineData: {
@@ -1936,20 +2456,60 @@ If you are not highly confident about a field, return null for it. Do not guess.
             itemName: {
               type: Type.STRING,
               nullable: true,
-              description: "The name/title of the obligation or document, or null if unknown/not found."
+              description: "The name/title of the obligation or insurance policy, or null if unknown."
             },
-            category: {
+            createdDate: {
               type: Type.STRING,
               nullable: true,
-              description: "Must be one of: " + categories.join(", ") + ", or null if unknown/not found."
+              description: "The policy issue date or effective start date in YYYY-MM-DD format, or null if unknown."
             },
             expiryDate: {
               type: Type.STRING,
               nullable: true,
-              description: "The expiration or due date in YYYY-MM-DD format, or null if unknown/not found."
+              description: "The policy expiration or due date in YYYY-MM-DD format, or null if unknown."
+            },
+            category: {
+              type: Type.STRING,
+              nullable: true,
+              description: "Must be one of: " + categories.join(", ") + ", or null if unknown."
+            },
+            responsibleName: {
+              type: Type.STRING,
+              nullable: true,
+              description: "Responsible person or manager name if mentioned, or null."
+            },
+            responsibleEmail: {
+              type: Type.STRING,
+              nullable: true,
+              description: "Responsible person email if mentioned, or null."
+            },
+            responsibleMobile: {
+              type: Type.STRING,
+              nullable: true,
+              description: "Responsible person mobile number in international format if mentioned, or null."
+            },
+            customerName: {
+              type: Type.STRING,
+              nullable: true,
+              description: "Insured client or customer name if mentioned, or null."
+            },
+            customerEmail: {
+              type: Type.STRING,
+              nullable: true,
+              description: "Insured client or customer email if mentioned, or null."
+            },
+            customerMobile: {
+              type: Type.STRING,
+              nullable: true,
+              description: "Insured client or customer mobile number in international format if mentioned, or null."
+            },
+            notes: {
+              type: Type.STRING,
+              nullable: true,
+              description: "Brief summary or notes extracted from policy, or null."
             }
           },
-          required: ["itemName", "category", "expiryDate"]
+          required: ["itemName"]
         },
       },
     });
@@ -2372,6 +2932,121 @@ app.post("/api/send-test-email", async (req, res) => {
     res.json({ success: true, email, logEntry });
   } else {
     res.status(500).json({ success: false, error: errorDetail, logEntry });
+  }
+});
+
+// 9.5 GET / POST SMS Credentials Settings
+app.get("/api/sms-settings", async (req, res) => {
+  try {
+    const creds = await getSmsCredentials();
+    const isConfigured = Boolean(creds.accountSid && creds.authToken);
+    const maskedAuthToken = creds.authToken
+      ? (creds.authToken.length > 4 ? "••••••••" + creds.authToken.slice(-4) : "••••••••")
+      : "";
+
+    res.json({
+      accountSid: creds.accountSid,
+      hasAuthToken: Boolean(creds.authToken),
+      maskedAuthToken,
+      phoneNumber: creds.phoneNumber,
+      isConfigured,
+      source: creds.source
+    });
+  } catch (err: any) {
+    res.status(500).json({ error: err.message || String(err) });
+  }
+});
+
+app.post("/api/sms-settings", async (req, res) => {
+  try {
+    let { accountSid, authToken, phoneNumber } = req.body;
+    accountSid = (accountSid || "").trim();
+    phoneNumber = (phoneNumber || "").trim();
+
+    const existingCreds = await getSmsCredentials();
+
+    let finalAuthToken = (authToken || "").trim();
+    if (!finalAuthToken || finalAuthToken.startsWith("••••")) {
+      finalAuthToken = existingCreds.authToken;
+    }
+
+    if (!accountSid) {
+      return res.status(400).json({ error: "Account SID is required." });
+    }
+    if (!finalAuthToken) {
+      return res.status(400).json({ error: "Auth Token is required." });
+    }
+
+    // Validate credentials directly with Twilio API (including phone number ownership)
+    const validation = await validateTwilioCredentials(accountSid, finalAuthToken, phoneNumber);
+    if (!validation.valid) {
+      return res.status(400).json({
+        success: false,
+        error: validation.errorDetail || "Invalid Twilio credentials"
+      });
+    }
+
+    // Save validated credentials securely
+    await saveSmsCredentials({
+      accountSid,
+      authToken: finalAuthToken,
+      phoneNumber
+    });
+
+    const maskedAuthToken = "••••••••" + finalAuthToken.slice(-4);
+
+    res.json({
+      success: true,
+      message: "Twilio connected successfully!",
+      accountSid,
+      hasAuthToken: true,
+      maskedAuthToken,
+      phoneNumber,
+      isConfigured: true,
+      source: "database"
+    });
+  } catch (err: any) {
+    res.status(500).json({ error: err.message || String(err) });
+  }
+});
+
+// 9.6 POST Send Test SMS
+app.post("/api/send-test-sms", async (req, res) => {
+  const { mobile } = req.body;
+  if (!mobile || typeof mobile !== "string" || !mobile.trim()) {
+    return res.status(400).json({ error: "Mobile number is required in international format (e.g. +91XXXXXXXXXX)" });
+  }
+
+  const cleanMobile = mobile.trim();
+  const todayStr = new Date().toLocaleDateString("en-GB", { day: "numeric", month: "short" });
+  const testMessage = `SyncAI Reminder (${todayStr}): SMS integration diagnostic test. System connected successfully. Check dashboard for details.`;
+
+  const twResult = await sendTwilioSMS(cleanMobile, testMessage);
+
+  const logEntry = {
+    id: "log-sms-test-" + Date.now() + "-" + Math.random().toString(36).substr(2, 5),
+    reminderId: "test-system-sms",
+    reminderName: "SMS Diagnostics Check",
+    recipientName: "System Administrator / Tester",
+    recipientEmail: "N/A",
+    recipientMobile: cleanMobile,
+    channel: "SMS" as const,
+    triggerType: "Test SMS",
+    triggerDate: new Date().toISOString().split("T")[0],
+    sentAt: new Date().toISOString(),
+    status: twResult.success ? ("success" as const) : ("failure" as const),
+    errorDetail: twResult.errorDetail || undefined,
+    emailSubject: "Test SMS Digest Check",
+    emailBody: testMessage,
+    recipientType: "responsible" as const
+  };
+
+  await saveLog(logEntry);
+
+  if (twResult.success) {
+    res.json({ success: true, mobile: cleanMobile, logEntry });
+  } else {
+    res.status(400).json({ success: false, error: twResult.errorDetail || "SMS delivery failed", logEntry });
   }
 });
 

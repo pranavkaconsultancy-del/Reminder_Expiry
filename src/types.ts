@@ -13,6 +13,7 @@ export interface Reminder {
   category: string;
   responsibleName: string;
   responsibleEmail: string;
+  responsibleMobile?: string;
   expiryDate: string; // YYYY-MM-DD
   renewalDate: string; // YYYY-MM-DD or empty
   status: 'Active' | 'Renewed' | 'Expired';
@@ -24,6 +25,7 @@ export interface Reminder {
   acknowledged_at?: string;
   customer_name?: string;
   customer_email?: string;
+  customer_mobile?: string;
 }
 
 export interface GlobalConfig {
@@ -38,6 +40,8 @@ export interface NotificationLog {
   reminderName: string;
   recipientName: string;
   recipientEmail: string;
+  recipientMobile?: string;
+  channel?: 'Email' | 'SMS';
   triggerType: ReminderRuleInterval | string;
   triggerDate: string; // YYYY-MM-DD
   sentAt: string; // ISO string

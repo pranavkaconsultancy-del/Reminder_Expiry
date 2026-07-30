@@ -1,7 +1,7 @@
 import React, { useState, useEffect } from "react";
-import { Mail, Calendar, Trash2, ArrowRight, Eye, RefreshCw, CheckCircle, XCircle, AlertCircle, Info } from "lucide-react";
+import { Mail, MessageSquare, Calendar, Trash2, ArrowRight, Eye, RefreshCw, CheckCircle, XCircle, AlertCircle, Info, Settings } from "lucide-react";
 import { NotificationLog, RULE_LABELS } from "../types";
-import { fetchNotificationLogs, clearNotificationLogs, runTriggerSimulation, SimulationResult, sendTestEmail } from "../lib/api";
+import { fetchNotificationLogs, clearNotificationLogs, runTriggerSimulation, SimulationResult, sendTestEmail, sendTestSMS, fetchSmsSettings } from "../lib/api";
 
 interface NotificationsLogProps {
   onRefreshReminders: () => void;
@@ -26,6 +26,95 @@ export default function NotificationsLog({ onRefreshReminders }: NotificationsLo
   const [testEmailAddress, setTestEmailAddress] = useState("pranavk.aconsultancy@gmail.com");
   const [isSendingTestEmail, setIsSendingTestEmail] = useState(false);
   const [testEmailFeedback, setTestEmailFeedback] = useState<{ type: "success" | "error"; message: string } | null>(null);
+
+  // Test SMS state variables
+  const [showTestSmsModal, setShowTestSmsModal] = useState(false);
+  const [testSmsNumber, setTestSmsNumber] = useState("+919876543210");
+  const [configuredTwilioNumber, setConfiguredTwilioNumber] = useState<string>("");
+  const [isSendingTestSms, setIsSendingTestSms] = useState(false);
+  const [testSmsFeedback, setTestSmsFeedback] = useState<{ type: "success" | "error"; message: string } | null>(null);
+
+  useEffect(() => {
+    fetchSmsSettings()
+      .then((settings) => {
+        if (settings && settings.phoneNumber) {
+          setConfiguredTwilioNumber(settings.phoneNumber);
+        }
+      })
+      .catch(() => {});
+  }, [showTestSmsModal]);
+
+  const isSameAsSendingNumber = React.useMemo(() => {
+    if (!testSmsNumber || !testSmsNumber.trim() || !configuredTwilioNumber || !configuredTwilioNumber.trim()) {
+      return false;
+    }
+    const cleanRecipient = testSmsNumber.replace(/\D/g, "");
+    const cleanConfigured = configuredTwilioNumber.replace(/\D/g, "");
+    if (!cleanRecipient || !cleanConfigured) return false;
+    return (
+      cleanRecipient === cleanConfigured ||
+      (cleanRecipient.length >= 8 && cleanConfigured.endsWith(cleanRecipient)) ||
+      (cleanConfigured.length >= 8 && cleanRecipient.endsWith(cleanConfigured))
+    );
+  }, [testSmsNumber, configuredTwilioNumber]);
+
+  const handleSendTestSms = async (e: React.FormEvent) => {
+    e.preventDefault();
+    if (!testSmsNumber.trim()) return;
+    if (isSameAsSendingNumber) {
+      setTestSmsFeedback({
+        type: "error",
+        message: "This is your configured Twilio sending number. Please enter a different mobile number to receive the test SMS."
+      });
+      return;
+    }
+    setIsSendingTestSms(true);
+    setTestSmsFeedback(null);
+    try {
+      const res = await sendTestSMS(testSmsNumber.trim());
+      if (res && res.success) {
+        setTestSmsFeedback({
+          type: "success",
+          message: `Test SMS sent successfully to ${res.mobile || testSmsNumber}!`
+        });
+      } else if (res && res.note) {
+        let noteMsg = res.note;
+        if (
+          noteMsg.includes("21266") ||
+          noteMsg.toLowerCase().includes("cannot be the same") ||
+          noteMsg.toLowerCase().includes("'to' and 'from'")
+        ) {
+          noteMsg = "SMS couldn't be sent — destination ('To') and sender ('From') phone numbers cannot be the same. Please enter a different recipient mobile number (e.g. your personal mobile phone) to test receiving the SMS.";
+        }
+        setTestSmsFeedback({
+          type: "error",
+          message: noteMsg
+        });
+      } else {
+        setTestSmsFeedback({
+          type: "success",
+          message: `Test SMS process completed.`
+        });
+      }
+      await loadLogs();
+    } catch (err: any) {
+      let errMsg = err.message || "Failed to send test SMS. Check Twilio parameters or configuration.";
+      if (
+        errMsg.includes("21266") ||
+        errMsg.toLowerCase().includes("cannot be the same") ||
+        errMsg.toLowerCase().includes("'to' and 'from'")
+      ) {
+        errMsg = "SMS couldn't be sent — destination ('To') and sender ('From') phone numbers cannot be the same. Please enter a different recipient mobile number (e.g. your personal mobile phone) to test receiving the SMS.";
+      }
+      setTestSmsFeedback({
+        type: "error",
+        message: errMsg
+      });
+      await loadLogs();
+    } finally {
+      setIsSendingTestSms(false);
+    }
+  };
 
   const handleSendTestEmail = async (e: React.FormEvent) => {
     e.preventDefault();
@@ -106,7 +195,9 @@ export default function NotificationsLog({ onRefreshReminders }: NotificationsLo
       log.reminderName.toLowerCase().includes(q) ||
       log.recipientName.toLowerCase().includes(q) ||
       log.recipientEmail.toLowerCase().includes(q) ||
-      log.emailSubject.toLowerCase().includes(q)
+      (log.recipientMobile && log.recipientMobile.toLowerCase().includes(q)) ||
+      log.emailSubject.toLowerCase().includes(q) ||
+      (log.channel && log.channel.toLowerCase().includes(q))
     );
   });
 
@@ -146,6 +237,18 @@ export default function NotificationsLog({ onRefreshReminders }: NotificationsLo
             >
               <Mail className="w-3.5 h-3.5" />
               Send Test Email
+            </button>
+
+            <button
+              onClick={() => {
+                setTestSmsFeedback(null);
+                setShowTestSmsModal(true);
+              }}
+              className="flex items-center gap-1.5 px-3 py-1.5 bg-violet-600 hover:bg-violet-700 text-white text-xs font-semibold rounded-lg transition-colors cursor-pointer shadow-xs border border-violet-700"
+              title="Send a quick manual diagnostic SMS digest to check Twilio configuration"
+            >
+              <MessageSquare className="w-3.5 h-3.5" />
+              Send Test SMS
             </button>
 
             <button
@@ -245,24 +348,25 @@ export default function NotificationsLog({ onRefreshReminders }: NotificationsLo
           </div>
         </div>
 
-        {/* Email Logs Table */}
+        {/* Email & SMS Logs Table */}
         <div className="overflow-x-auto border border-gray-100 rounded-lg">
           <table className="w-full text-left text-xs border-collapse">
             <thead className="bg-gray-50 text-gray-500 font-medium uppercase text-[10px] sticky top-0 z-10">
               <tr>
                 <th className="py-2.5 px-4">Status</th>
+                <th className="py-2.5 px-4">Channel</th>
                 <th className="py-2.5 px-4">Obligation Name</th>
-                <th className="py-2.5 px-4">Recipient Name</th>
+                <th className="py-2.5 px-4">Recipient</th>
                 <th className="py-2.5 px-4">Trigger / Rule</th>
                 <th className="py-2.5 px-4">Dispatched At</th>
-                <th className="py-2.5 px-4 text-right">Email Body</th>
+                <th className="py-2.5 px-4 text-right">Message Preview</th>
               </tr>
             </thead>
             <tbody className="divide-y divide-gray-100 text-gray-600">
               {filteredLogs.length === 0 ? (
                 <tr>
-                  <td colSpan={6} className="py-8 text-center text-xs text-gray-400 italic">
-                    {isLoadingLogs ? "Loading email dispatch records..." : "No notification records found matching search filters."}
+                  <td colSpan={7} className="py-8 text-center text-xs text-gray-400 italic">
+                    {isLoadingLogs ? "Loading dispatch records..." : "No notification records found matching search filters."}
                   </td>
                 </tr>
               ) : (
@@ -279,6 +383,17 @@ export default function NotificationsLog({ onRefreshReminders }: NotificationsLo
                         </span>
                       )}
                     </td>
+                    <td className="py-3 px-4">
+                      {log.channel === "SMS" ? (
+                        <span className="inline-flex items-center gap-1 text-[10px] font-bold uppercase tracking-wider text-violet-700 bg-violet-50 border border-violet-100 px-2 py-0.5 rounded-md">
+                          <MessageSquare className="w-3 h-3" /> SMS Digest
+                        </span>
+                      ) : (
+                        <span className="inline-flex items-center gap-1 text-[10px] font-bold uppercase tracking-wider text-blue-700 bg-blue-50 border border-blue-100 px-2 py-0.5 rounded-md">
+                          <Mail className="w-3 h-3" /> Email
+                        </span>
+                      )}
+                    </td>
                     <td className="py-3 px-4 font-semibold text-gray-900">{log.reminderName}</td>
                     <td className="py-3 px-4">
                       <div className="font-medium text-gray-800 flex items-center gap-1.5">
@@ -289,7 +404,9 @@ export default function NotificationsLog({ onRefreshReminders }: NotificationsLo
                           <span className="inline-block text-[9px] font-extrabold uppercase bg-slate-50 text-slate-600 border border-slate-100 rounded-sm px-1 py-0.25 tracking-wide">Responsible</span>
                         )}
                       </div>
-                      <div className="text-[10px] text-gray-400 font-mono mt-0.5">{log.recipientEmail}</div>
+                      <div className="text-[10px] text-gray-400 font-mono mt-0.5">
+                        {log.channel === "SMS" && log.recipientMobile ? log.recipientMobile : log.recipientEmail}
+                      </div>
                     </td>
                     <td className="py-3 px-4 font-medium text-gray-700">
                       <span className="bg-gray-100 px-1.5 py-0.5 rounded-sm">
@@ -303,10 +420,12 @@ export default function NotificationsLog({ onRefreshReminders }: NotificationsLo
                       <button
                         onClick={() => setSelectedLog(log)}
                         className="p-1 text-blue-600 hover:text-blue-800 hover:bg-blue-50 border border-transparent hover:border-blue-100 rounded-md transition-all cursor-pointer inline-flex items-center gap-1"
-                        title="View Raw HTML Email Template"
+                        title={log.channel === "SMS" ? "View Raw SMS Digest" : "View Raw HTML Email Template"}
                       >
                         <Eye className="w-3.5 h-3.5" />
-                        <span className="text-[10px] font-semibold">Preview Email</span>
+                        <span className="text-[10px] font-semibold">
+                          {log.channel === "SMS" ? "Preview SMS" : "Preview Email"}
+                        </span>
                       </button>
                     </td>
                   </tr>
@@ -325,16 +444,22 @@ export default function NotificationsLog({ onRefreshReminders }: NotificationsLo
         </div>
       </div>
 
-      {/* HTML Email Modal Preview */}
+      {/* Notification Modal Preview (Email or SMS) */}
       {selectedLog && (
         <div className="fixed inset-0 bg-gray-900/40 backdrop-blur-xs flex items-center justify-center p-4 z-50 animate-fade-in">
           <div className="bg-white rounded-xl shadow-xl border border-gray-100 w-full max-w-2xl overflow-hidden flex flex-col max-h-[85vh]">
             <div className="p-4 border-b border-gray-100 bg-gray-50 flex items-center justify-between">
               <div className="flex items-center gap-2">
-                <Mail className="w-5 h-5 text-blue-600" />
+                {selectedLog.channel === "SMS" ? (
+                  <MessageSquare className="w-5 h-5 text-violet-600" />
+                ) : (
+                  <Mail className="w-5 h-5 text-blue-600" />
+                )}
                 <div>
-                  <h3 className="font-bold text-gray-900 text-sm">HTML Template Dispatch Audit</h3>
-                  <p className="text-[10px] text-gray-500 mt-0.5">Subject: {selectedLog.emailSubject}</p>
+                  <h3 className="font-bold text-gray-900 text-sm">
+                    {selectedLog.channel === "SMS" ? "SMS Digest Dispatch Audit" : "HTML Template Dispatch Audit"}
+                  </h3>
+                  <p className="text-[10px] text-gray-500 mt-0.5">Subject / Reference: {selectedLog.emailSubject}</p>
                 </div>
               </div>
               <button
@@ -345,11 +470,18 @@ export default function NotificationsLog({ onRefreshReminders }: NotificationsLo
               </button>
             </div>
 
-            {/* Simulated Envelope Details */}
+            {/* Envelope / Header Details */}
             <div className="bg-gray-50 border-b border-gray-100 px-6 py-3 text-xs text-gray-500 grid grid-cols-1 gap-1">
-              <div><strong>Sender:</strong> Expiry Manager &lt;onboarding@resend.dev&gt;</div>
               <div>
-                <strong>Recipient:</strong> {selectedLog.recipientName} &lt;{selectedLog.recipientEmail}&gt;
+                <strong>Channel:</strong> {selectedLog.channel === "SMS" ? "Twilio SMS Digest" : "Resend Email"}
+              </div>
+              <div>
+                <strong>Recipient:</strong> {selectedLog.recipientName}{" "}
+                {selectedLog.channel === "SMS" && selectedLog.recipientMobile ? (
+                  <code className="text-violet-700 bg-violet-50 px-1 py-0.5 rounded-sm">{selectedLog.recipientMobile}</code>
+                ) : (
+                  ` <${selectedLog.recipientEmail}>`
+                )}
                 {selectedLog.recipientType && (
                   <span className={`inline-block text-[9px] font-bold uppercase ml-2 px-1.5 py-0.5 rounded-sm ${
                     selectedLog.recipientType === 'customer' 
@@ -362,20 +494,51 @@ export default function NotificationsLog({ onRefreshReminders }: NotificationsLo
               </div>
               <div><strong>Sent At:</strong> {new Date(selectedLog.sentAt).toUTCString()}</div>
               {selectedLog.errorDetail && (
-                <div className="text-red-600 mt-1.5 p-2 bg-red-50 border border-red-100 rounded-md font-mono text-[10px] whitespace-pre-wrap max-h-16 overflow-y-auto">
+                <div className="text-red-600 mt-1.5 p-2 bg-red-50 border border-red-100 rounded-md font-mono text-[10px] whitespace-pre-wrap max-h-24 overflow-y-auto">
                   <strong>Delivery Log:</strong> {selectedLog.errorDetail}
+                  {(selectedLog.channel === "SMS" || selectedLog.errorDetail.toLowerCase().includes("sms") || selectedLog.errorDetail.toLowerCase().includes("twilio")) && (
+                    <div className="mt-2 pt-1 border-t border-red-200/50">
+                      <button
+                        type="button"
+                        onClick={() => {
+                          setSelectedLog(null);
+                          window.dispatchEvent(new CustomEvent("navigate-tab", { detail: { tab: "rules", subTab: "sms" } }));
+                          window.dispatchEvent(new CustomEvent("open-sms-settings"));
+                          setTimeout(() => {
+                            window.dispatchEvent(new CustomEvent("open-sms-settings"));
+                          }, 50);
+                        }}
+                        className="inline-flex items-center gap-1.5 px-2.5 py-1 bg-violet-600 hover:bg-violet-700 text-white text-[10px] font-bold rounded-md shadow-xs cursor-pointer transition-colors"
+                      >
+                        <Settings className="w-3 h-3" />
+                        Go to Settings → SMS Settings to add Twilio credentials
+                      </button>
+                    </div>
+                  )}
                 </div>
               )}
             </div>
 
-            {/* Email Canvas Iframe */}
+            {/* Body Canvas */}
             <div className="flex-1 p-6 overflow-y-auto bg-gray-100 flex justify-center">
-              <div className="w-full bg-white border border-gray-200 shadow-sm rounded-lg overflow-hidden">
-                <div
-                  className="p-4 overflow-x-auto"
-                  dangerouslySetInnerHTML={{ __html: selectedLog.emailBody }}
-                />
-              </div>
+              {selectedLog.channel === "SMS" ? (
+                <div className="w-full max-w-sm bg-slate-900 text-white rounded-2xl p-4 shadow-xl border border-slate-800 space-y-3 font-sans">
+                  <div className="flex items-center justify-between border-b border-slate-800 pb-2 text-[10px] text-slate-400">
+                    <span>SMS Digest Preview</span>
+                    <span>{selectedLog.emailBody.length} chars</span>
+                  </div>
+                  <div className="p-3 bg-violet-900/40 border border-violet-500/30 rounded-xl text-xs leading-relaxed font-mono text-violet-100 whitespace-pre-wrap break-words">
+                    {selectedLog.emailBody}
+                  </div>
+                </div>
+              ) : (
+                <div className="w-full bg-white border border-gray-200 shadow-sm rounded-lg overflow-hidden">
+                  <div
+                    className="p-4 overflow-x-auto"
+                    dangerouslySetInnerHTML={{ __html: selectedLog.emailBody }}
+                  />
+                </div>
+              )}
             </div>
 
             <div className="p-4 bg-gray-50 border-t border-gray-100 text-right">
@@ -472,6 +635,124 @@ export default function NotificationsLog({ onRefreshReminders }: NotificationsLo
                 >
                   <Mail className="w-3.5 h-3.5" />
                   {isSendingTestEmail ? "Sending..." : "Confirm & Send"}
+                </button>
+              </div>
+            </form>
+          </div>
+        </div>
+      )}
+
+      {/* Send Test SMS Modal */}
+      {showTestSmsModal && (
+        <div className="fixed inset-0 bg-gray-900/30 backdrop-blur-xs flex items-center justify-center p-4 z-50 animate-fade-in">
+          <div className="bg-white rounded-xl shadow-xl border border-gray-100 w-full max-w-md overflow-hidden animate-slide-up">
+            <div className="p-4 border-b border-gray-100 bg-gray-50 flex items-center justify-between">
+              <div className="flex items-center gap-2">
+                <MessageSquare className="w-5 h-5 text-violet-600" />
+                <div>
+                  <h3 className="font-bold text-gray-900 text-sm">Send Test SMS Digest</h3>
+                  <p className="text-[10px] text-gray-500 mt-0.5">Verify Twilio SMS integration / simulation</p>
+                </div>
+              </div>
+              <button
+                type="button"
+                onClick={() => {
+                  setShowTestSmsModal(false);
+                  setTestSmsFeedback(null);
+                }}
+                className="text-gray-400 hover:text-gray-600 hover:bg-gray-200 p-1 rounded-md transition-colors cursor-pointer"
+              >
+                <XCircle className="w-5 h-5" />
+              </button>
+            </div>
+
+            <form onSubmit={handleSendTestSms} className="p-5 space-y-4">
+              {testSmsFeedback && (
+                <div className={`p-3.5 rounded-lg text-xs border flex items-start gap-2.5 ${
+                  testSmsFeedback.type === "success"
+                    ? "bg-green-50 border-green-200 text-green-800"
+                    : "bg-red-50 border-red-200 text-red-800"
+                }`}>
+                  {testSmsFeedback.type === "success" ? (
+                    <CheckCircle className="w-4 h-4 text-green-600 shrink-0 mt-0.5" />
+                  ) : (
+                    <AlertCircle className="w-4 h-4 text-red-600 shrink-0 mt-0.5" />
+                  )}
+                  <div className="space-y-1">
+                    <p className="font-semibold leading-tight">
+                      {testSmsFeedback.type === "success" ? "Success" : "SMS Diagnostic Error"}
+                    </p>
+                    <p className="text-[11px] leading-relaxed break-words font-mono bg-white/40 p-1.5 rounded-sm">
+                      {testSmsFeedback.message}
+                    </p>
+                    {testSmsFeedback.type === "error" && (
+                      <button
+                        type="button"
+                        onClick={() => {
+                          setShowTestSmsModal(false);
+                          setTestSmsFeedback(null);
+                          window.dispatchEvent(new CustomEvent("navigate-tab", { detail: { tab: "rules", subTab: "sms" } }));
+                          window.dispatchEvent(new CustomEvent("open-sms-settings"));
+                          setTimeout(() => {
+                            window.dispatchEvent(new CustomEvent("open-sms-settings"));
+                          }, 50);
+                        }}
+                        className="mt-2 text-[11px] font-bold text-white bg-violet-600 hover:bg-violet-700 px-3 py-1.5 rounded-lg transition-colors flex items-center gap-1.5 cursor-pointer shadow-xs"
+                      >
+                        <Settings className="w-3.5 h-3.5" />
+                        Go to Settings → SMS Settings
+                      </button>
+                    )}
+                  </div>
+                </div>
+              )}
+
+              <div>
+                <label className="block text-xs font-bold uppercase tracking-wider text-gray-500 mb-1">
+                  Recipient Mobile Number (International Format) *
+                </label>
+                <input
+                  type="tel"
+                  required
+                  value={testSmsNumber}
+                  onChange={(e) => setTestSmsNumber(e.target.value)}
+                  placeholder="+91XXXXXXXXXX"
+                  className={`w-full px-3 py-2 border rounded-lg focus:outline-none focus:ring-1 text-xs font-mono transition-colors ${
+                    isSameAsSendingNumber
+                      ? "border-red-400 focus:ring-red-500 bg-red-50/50 text-red-900"
+                      : "border-gray-200 focus:ring-blue-500 text-gray-800 bg-white"
+                  }`}
+                />
+                {isSameAsSendingNumber ? (
+                  <p className="text-xs text-red-600 font-medium mt-1.5 flex items-center gap-1 leading-snug">
+                    <AlertCircle className="w-3.5 h-3.5 shrink-0 text-red-600" />
+                    This is your configured Twilio sending number. Please enter a different mobile number to receive the test SMS.
+                  </p>
+                ) : (
+                  <p className="text-[11px] text-gray-500 mt-1.5 leading-relaxed">
+                    Enter a mobile number different from your Twilio sending number (set in SMS Settings) to receive this test message.
+                  </p>
+                )}
+              </div>
+
+              <div className="flex items-center justify-end gap-2 pt-3 border-t border-gray-100">
+                <button
+                  type="button"
+                  onClick={() => {
+                    setShowTestSmsModal(false);
+                    setTestSmsFeedback(null);
+                  }}
+                  className="px-3.5 py-1.5 border border-gray-200 text-gray-500 hover:text-gray-700 hover:bg-gray-50 rounded-lg text-xs font-semibold cursor-pointer transition-colors"
+                >
+                  Cancel
+                </button>
+                <button
+                  type="submit"
+                  disabled={isSendingTestSms || isSameAsSendingNumber || !testSmsNumber.trim()}
+                  className="flex items-center gap-1.5 px-4 py-1.5 bg-violet-600 hover:bg-violet-700 text-white text-xs font-bold rounded-lg shadow-xs border border-violet-700 cursor-pointer transition-all active:scale-95 disabled:opacity-50 disabled:cursor-not-allowed"
+                >
+                  <MessageSquare className="w-3.5 h-3.5" />
+                  {isSendingTestSms ? "Sending..." : "Send Test SMS"}
                 </button>
               </div>
             </form>

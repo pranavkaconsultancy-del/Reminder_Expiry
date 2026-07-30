@@ -30,6 +30,7 @@ export default function ReminderForm({
   const [category, setCategory] = useState("");
   const [responsibleName, setResponsibleName] = useState("Pranav K");
   const [responsibleEmail, setResponsibleEmail] = useState("pranavk.aconsultancy@gmail.com");
+  const [responsibleMobile, setResponsibleMobile] = useState("+919876543210");
   const [expiryDate, setExpiryDate] = useState("");
   const [renewalDate, setRenewalDate] = useState("");
   const [status, setStatus] = useState<"Active" | "Renewed" | "Expired">("Active");
@@ -37,13 +38,17 @@ export default function ReminderForm({
   const [renewalPeriodOverride, setRenewalPeriodOverride] = useState("");
   const [customerName, setCustomerName] = useState("");
   const [customerEmail, setCustomerEmail] = useState("");
+  const [customerMobile, setCustomerMobile] = useState("");
   
   // AI features local state
   const [isUploading, setIsUploading] = useState(false);
+  const [extractedBannerVisible, setExtractedBannerVisible] = useState(false);
+  const [createdDate, setCreatedDate] = useState("");
   const [aiSuggestions, setAiSuggestions] = useState<{
     itemName?: boolean;
     category?: boolean;
     expiryDate?: boolean;
+    createdDate?: boolean;
   }>({});
   const [smartCategorySuggestion, setSmartCategorySuggestion] = useState<string | null>(null);
   const [timingSuggestion, setTimingSuggestion] = useState<{
@@ -116,6 +121,10 @@ export default function ReminderForm({
         setItemName(result.itemName);
         suggestions.itemName = true;
       }
+      if (result.createdDate) {
+        setCreatedDate(result.createdDate);
+        suggestions.createdDate = true;
+      }
       if (result.category) {
         if (categories.includes(result.category)) {
           setCategory(result.category);
@@ -127,7 +136,6 @@ export default function ReminderForm({
         }
       }
       if (result.expiryDate) {
-        // Run expiry change calculations
         const dateVal = result.expiryDate;
         setExpiryDate(dateVal);
         if (dateVal) {
@@ -144,7 +152,19 @@ export default function ReminderForm({
         suggestions.expiryDate = true;
       }
 
+      if (result.responsibleName) setResponsibleName(result.responsibleName);
+      if (result.responsibleEmail) setResponsibleEmail(result.responsibleEmail);
+      if (result.responsibleMobile) setResponsibleMobile(result.responsibleMobile);
+      if (result.customerName) setCustomerName(result.customerName);
+      if (result.customerEmail) setCustomerEmail(result.customerEmail);
+      if (result.customerMobile) setCustomerMobile(result.customerMobile);
+
+      if (result.notes) {
+        setNotes((prev) => (result.notes + (prev ? `\n${prev}` : "")));
+      }
+
       setAiSuggestions(suggestions);
+      setExtractedBannerVisible(true);
     } catch (err: any) {
       setError(err.message || "An error occurred during document parsing.");
     } finally {
@@ -253,6 +273,7 @@ export default function ReminderForm({
       setCategory(reminder.category || (categories[0] || "Payment Due"));
       setResponsibleName(reminder.responsibleName || "");
       setResponsibleEmail(reminder.responsibleEmail || "");
+      setResponsibleMobile(reminder.responsibleMobile || "");
       setExpiryDate(reminder.expiryDate || "");
       setRenewalDate(reminder.renewalDate || "");
       setStatus(reminder.status || "Active");
@@ -260,6 +281,7 @@ export default function ReminderForm({
       setRenewalPeriodOverride(reminder.renewalPeriodOverride || "");
       setCustomerName(reminder.customer_name || "");
       setCustomerEmail(reminder.customer_email || "");
+      setCustomerMobile(reminder.customer_mobile || "");
       if (reminder.rulesOverride) {
         setUseGlobalRules(false);
         setRulesOverride(reminder.rulesOverride);
@@ -271,6 +293,7 @@ export default function ReminderForm({
       setCategory(categories[0] || "Payment Due");
       setResponsibleName("Pranav K");
       setResponsibleEmail("pranavk.aconsultancy@gmail.com");
+      setResponsibleMobile("+919876543210");
       setExpiryDate("");
       setRenewalDate("");
       setStatus("Active");
@@ -278,6 +301,7 @@ export default function ReminderForm({
       setRenewalPeriodOverride("");
       setCustomerName("");
       setCustomerEmail("");
+      setCustomerMobile("");
       setUseGlobalRules(true);
     }
     setError(null);
@@ -475,6 +499,7 @@ export default function ReminderForm({
       category,
       responsibleName: responsibleName.trim(),
       responsibleEmail: responsibleEmail.trim(),
+      responsibleMobile: responsibleMobile.trim() || undefined,
       expiryDate,
       renewalDate: renewalDate || "",
       status,
@@ -482,7 +507,8 @@ export default function ReminderForm({
       rulesOverride: useGlobalRules ? undefined : rulesOverride,
       renewalPeriodOverride: renewalPeriodOverride.trim() || undefined,
       customer_name: customerName.trim() || undefined,
-      customer_email: customerEmail.trim() || undefined
+      customer_email: customerEmail.trim() || undefined,
+      customer_mobile: customerMobile.trim() || undefined
     };
 
     try {
@@ -536,12 +562,12 @@ export default function ReminderForm({
               )}
             </div>
             <p className="text-xs text-gray-500">
-              Upload a PDF or Photo of the agreement, policy, license, or visa, and Gemini will automatically detect and populate the fields for you to review.
+              Upload an Insurance Policy, AMC, License, or Visa PDF/Image to auto-extract Name, Created Date, and Expiry Date for review before saving.
             </p>
             <div className="relative mt-2">
               <label className="flex items-center justify-center gap-2 px-4 py-2.5 bg-white hover:bg-indigo-50/50 border border-indigo-200 hover:border-indigo-300 text-indigo-700 hover:text-indigo-800 text-xs font-semibold rounded-lg cursor-pointer transition-all shadow-2xs">
                 <UploadCloud className="w-4 h-4 text-indigo-500" />
-                {isUploading ? "Reading Document..." : "Choose PDF or Image"}
+                {isUploading ? "Reading Document..." : "Upload Policy PDF or Image"}
                 <input
                   type="file"
                   accept="application/pdf,image/*"
@@ -551,6 +577,30 @@ export default function ReminderForm({
                 />
               </label>
             </div>
+          </div>
+        )}
+
+        {/* Extracted Review Banner */}
+        {extractedBannerVisible && (
+          <div className="p-3.5 bg-emerald-50 border border-emerald-200 rounded-xl flex items-center justify-between animate-fade-in">
+            <div className="flex items-center gap-2">
+              <Sparkles className="w-4.5 h-4.5 text-emerald-600 shrink-0" />
+              <div>
+                <span className="text-xs font-bold text-emerald-900 block">
+                  Extracted from document — please review and correct if needed
+                </span>
+                <span className="text-[11px] text-emerald-700">
+                  All extracted fields are pre-filled below. Please review carefully before saving.
+                </span>
+              </div>
+            </div>
+            <button
+              type="button"
+              onClick={() => setExtractedBannerVisible(false)}
+              className="text-emerald-700 hover:text-emerald-900 text-xs font-bold underline shrink-0"
+            >
+              Dismiss
+            </button>
           </div>
         )}
 
@@ -668,7 +718,7 @@ export default function ReminderForm({
         )}
 
         {/* Responsible Person */}
-        <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+        <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
           <div>
             <label className="block text-xs font-semibold uppercase tracking-wider text-gray-500 mb-1.5">
               Responsible Person Name *
@@ -696,6 +746,19 @@ export default function ReminderForm({
               className="w-full px-3 py-2 border border-gray-200 rounded-lg focus:outline-none focus:ring-1 focus:ring-blue-500 focus:border-blue-500 text-sm placeholder:text-gray-400"
             />
           </div>
+
+          <div>
+            <label className="block text-xs font-semibold uppercase tracking-wider text-gray-500 mb-1.5">
+              Responsible Mobile (SMS Digest)
+            </label>
+            <input
+              type="tel"
+              placeholder="+91XXXXXXXXXX"
+              value={responsibleMobile}
+              onChange={(e) => setResponsibleMobile(e.target.value)}
+              className="w-full px-3 py-2 border border-gray-200 rounded-lg focus:outline-none focus:ring-1 focus:ring-blue-500 focus:border-blue-500 text-sm placeholder:text-gray-400 font-mono"
+            />
+          </div>
         </div>
 
         {/* Customer Information (Optional) */}
@@ -705,10 +768,10 @@ export default function ReminderForm({
               Also notify a customer? (optional)
             </span>
             <span className="text-[11px] text-gray-500 mt-0.5">
-              Add their email if this reminder should also go to a customer, not just the responsible person.
+              Add their contact details if this reminder should also notify a customer via email or daily SMS.
             </span>
           </div>
-          <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+          <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
             <div>
               <label className="block text-xs font-semibold uppercase tracking-wider text-gray-500 mb-1.5">
                 Customer Name (Optional)
@@ -732,6 +795,19 @@ export default function ReminderForm({
                 value={customerEmail}
                 onChange={(e) => setCustomerEmail(e.target.value)}
                 className="w-full px-3 py-2 bg-white border border-gray-200 rounded-lg focus:outline-none focus:ring-1 focus:ring-blue-500 focus:border-blue-500 text-sm placeholder:text-gray-400"
+              />
+            </div>
+
+            <div>
+              <label className="block text-xs font-semibold uppercase tracking-wider text-gray-500 mb-1.5">
+                Customer Mobile (Optional)
+              </label>
+              <input
+                type="tel"
+                placeholder="+91XXXXXXXXXX"
+                value={customerMobile}
+                onChange={(e) => setCustomerMobile(e.target.value)}
+                className="w-full px-3 py-2 bg-white border border-gray-200 rounded-lg focus:outline-none focus:ring-1 focus:ring-blue-500 focus:border-blue-500 text-sm placeholder:text-gray-400 font-mono"
               />
             </div>
           </div>

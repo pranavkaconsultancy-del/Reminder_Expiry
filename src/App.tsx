@@ -212,13 +212,21 @@ export default function App() {
     const handleApplyFilter = () => {
       setActiveTab("dashboard");
     };
+    const handleNavigateTab = (e: Event) => {
+      const customEv = e as CustomEvent<{ tab: ActiveTab; subTab?: string }>;
+      if (customEv.detail && customEv.detail.tab) {
+        setActiveTab(customEv.detail.tab);
+      }
+    };
 
     window.addEventListener("database-changed", handleDbChange);
     window.addEventListener("apply-dashboard-filter", handleApplyFilter);
+    window.addEventListener("navigate-tab", handleNavigateTab);
 
     return () => {
       window.removeEventListener("database-changed", handleDbChange);
       window.removeEventListener("apply-dashboard-filter", handleApplyFilter);
+      window.removeEventListener("navigate-tab", handleNavigateTab);
     };
   }, []);
 

@@ -190,6 +190,64 @@ export async function sendTestEmail(email: string): Promise<{ success: boolean; 
   return safeJson(res);
 }
 
+export interface SmsSettings {
+  accountSid: string;
+  hasAuthToken: boolean;
+  maskedAuthToken: string;
+  phoneNumber: string;
+  isConfigured: boolean;
+  source: "database" | "file" | "env" | "none";
+}
+
+export async function fetchSmsSettings(): Promise<SmsSettings> {
+  const res = await fetch("/api/sms-settings");
+  if (!res.ok) {
+    try {
+      const errData = await safeJson(res);
+      throw new Error(errData.error || `Failed to fetch SMS settings (HTTP ${res.status})`);
+    } catch (e: any) {
+      throw new Error(e.message || `Failed to fetch SMS settings (HTTP ${res.status})`);
+    }
+  }
+  return safeJson(res);
+}
+
+export async function saveSmsSettings(settings: { accountSid: string; authToken?: string; phoneNumber: string }): Promise<SmsSettings & { message?: string }> {
+  const res = await fetch("/api/sms-settings", {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify(settings),
+  });
+  if (!res.ok) {
+    let errData: any = {};
+    try {
+      errData = await safeJson(res);
+    } catch (e: any) {
+      throw new Error(e.message || `Failed to save SMS settings (HTTP ${res.status})`);
+    }
+    throw new Error(errData.error || "Failed to save SMS settings");
+  }
+  return safeJson(res);
+}
+
+export async function sendTestSMS(mobile: string): Promise<{ success: boolean; mobile: string; logEntry: NotificationLog; note?: string }> {
+  const res = await fetch("/api/send-test-sms", {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ mobile }),
+  });
+  if (!res.ok) {
+    let errData: any = {};
+    try {
+      errData = await safeJson(res);
+    } catch (e: any) {
+      throw new Error(e.message || `Failed to send test SMS (HTTP ${res.status})`);
+    }
+    throw new Error(errData.error || "Failed to send test SMS");
+  }
+  return safeJson(res);
+}
+
 export interface DatabaseStatus {
   database: "supabase" | "local";
   urlConfigured: boolean;
