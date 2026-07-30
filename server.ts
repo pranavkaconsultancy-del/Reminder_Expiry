@@ -2385,6 +2385,35 @@ app.post("/api/logs/clear", async (req, res) => {
   }
 });
 
+function formatGeminiError(err: any): string {
+  const rawMsg = typeof err === "string" ? err : (err?.message || JSON.stringify(err));
+  
+  if (
+    rawMsg.includes("API key not valid") || 
+    rawMsg.includes("API_KEY_INVALID") || 
+    rawMsg.includes("INVALID_ARGUMENT") ||
+    rawMsg.includes("API key")
+  ) {
+    return "Invalid or missing Gemini API Key. If you deployed this project on Vercel, please go to Vercel Project Settings → Environment Variables and add `GEMINI_API_KEY` with a valid Google Gemini API Key from Google AI Studio (https://aistudio.google.com/app/apikey).";
+  }
+  
+  if (rawMsg.includes("403") || rawMsg.includes("PERMISSION_DENIED")) {
+    return "Gemini API permission denied. Please verify that your `GEMINI_API_KEY` has access to the Generative Language API in Google AI Studio.";
+  }
+
+  try {
+    const parsed = JSON.parse(rawMsg);
+    if (parsed?.error?.message) {
+      if (parsed.error.message.includes("API key not valid") || parsed.error.message.includes("API_KEY_INVALID")) {
+        return "Invalid or missing Gemini API Key. If deployed on Vercel, please set GEMINI_API_KEY in Vercel Project Settings → Environment Variables.";
+      }
+      return parsed.error.message;
+    }
+  } catch (e) {}
+
+  return rawMsg;
+}
+
 // AI Feature 1: Document Upload + Autofill
 app.post("/api/ai/analyze-document", async (req, res) => {
   try {
@@ -2394,8 +2423,10 @@ app.post("/api/ai/analyze-document", async (req, res) => {
     }
 
     const geminiApiKey = process.env.GEMINI_API_KEY;
-    if (!geminiApiKey) {
-      return res.status(400).json({ error: "Gemini API key is not configured in environment secrets." });
+    if (!geminiApiKey || geminiApiKey.trim() === "" || geminiApiKey === "MY_GEMINI_API_KEY") {
+      return res.status(400).json({ 
+        error: "Gemini API Key is missing. If deployed on Vercel, please add `GEMINI_API_KEY` in Vercel Project Settings → Environment Variables." 
+      });
     }
 
     const ai = new GoogleGenAI({
@@ -2445,80 +2476,92 @@ If you are not highly confident about a field (especially a date), return null f
       },
     };
 
-    const response = await ai.models.generateContent({
-      model: "gemini-3.5-flash",
-      contents: [filePart, prompt],
-      config: {
-        responseMimeType: "application/json",
-        responseSchema: {
-          type: Type.OBJECT,
-          properties: {
-            itemName: {
-              type: Type.STRING,
-              nullable: true,
-              description: "The name/title of the obligation or insurance policy, or null if unknown."
+    let response;
+    try {
+      response = await ai.models.generateContent({
+        model: "gemini-2.5-flash",
+        contents: [filePart, prompt],
+        config: {
+          responseMimeType: "application/json",
+          responseSchema: {
+            type: Type.OBJECT,
+            properties: {
+              itemName: {
+                type: Type.STRING,
+                nullable: true,
+                description: "The name/title of the obligation or insurance policy, or null if unknown."
+              },
+              createdDate: {
+                type: Type.STRING,
+                nullable: true,
+                description: "The policy issue date or effective start date in YYYY-MM-DD format, or null if unknown."
+              },
+              expiryDate: {
+                type: Type.STRING,
+                nullable: true,
+                description: "The policy expiration or due date in YYYY-MM-DD format, or null if unknown."
+              },
+              category: {
+                type: Type.STRING,
+                nullable: true,
+                description: "Must be one of: " + categories.join(", ") + ", or null if unknown."
+              },
+              responsibleName: {
+                type: Type.STRING,
+                nullable: true,
+                description: "Responsible person or manager name if mentioned, or null."
+              },
+              responsibleEmail: {
+                type: Type.STRING,
+                nullable: true,
+                description: "Responsible person email if mentioned, or null."
+              },
+              responsibleMobile: {
+                type: Type.STRING,
+                nullable: true,
+                description: "Responsible person mobile number in international format if mentioned, or null."
+              },
+              customerName: {
+                type: Type.STRING,
+                nullable: true,
+                description: "Insured client or customer name if mentioned, or null."
+              },
+              customerEmail: {
+                type: Type.STRING,
+                nullable: true,
+                description: "Insured client or customer email if mentioned, or null."
+              },
+              customerMobile: {
+                type: Type.STRING,
+                nullable: true,
+                description: "Insured client or customer mobile number in international format if mentioned, or null."
+              },
+              notes: {
+                type: Type.STRING,
+                nullable: true,
+                description: "Brief summary or notes extracted from policy, or null."
+              }
             },
-            createdDate: {
-              type: Type.STRING,
-              nullable: true,
-              description: "The policy issue date or effective start date in YYYY-MM-DD format, or null if unknown."
-            },
-            expiryDate: {
-              type: Type.STRING,
-              nullable: true,
-              description: "The policy expiration or due date in YYYY-MM-DD format, or null if unknown."
-            },
-            category: {
-              type: Type.STRING,
-              nullable: true,
-              description: "Must be one of: " + categories.join(", ") + ", or null if unknown."
-            },
-            responsibleName: {
-              type: Type.STRING,
-              nullable: true,
-              description: "Responsible person or manager name if mentioned, or null."
-            },
-            responsibleEmail: {
-              type: Type.STRING,
-              nullable: true,
-              description: "Responsible person email if mentioned, or null."
-            },
-            responsibleMobile: {
-              type: Type.STRING,
-              nullable: true,
-              description: "Responsible person mobile number in international format if mentioned, or null."
-            },
-            customerName: {
-              type: Type.STRING,
-              nullable: true,
-              description: "Insured client or customer name if mentioned, or null."
-            },
-            customerEmail: {
-              type: Type.STRING,
-              nullable: true,
-              description: "Insured client or customer email if mentioned, or null."
-            },
-            customerMobile: {
-              type: Type.STRING,
-              nullable: true,
-              description: "Insured client or customer mobile number in international format if mentioned, or null."
-            },
-            notes: {
-              type: Type.STRING,
-              nullable: true,
-              description: "Brief summary or notes extracted from policy, or null."
-            }
+            required: ["itemName"]
           },
-          required: ["itemName"]
         },
-      },
-    });
+      });
+    } catch (genErr: any) {
+      // Fallback model if gemini-2.5-flash is unavailable on user API key
+      response = await ai.models.generateContent({
+        model: "gemini-1.5-flash",
+        contents: [filePart, prompt],
+        config: {
+          responseMimeType: "application/json"
+        }
+      });
+    }
 
     const resultText = response.text || "{}";
     res.json(JSON.parse(resultText));
   } catch (err: any) {
     console.error("[AI Document Upload Error]:", err);
-    res.status(500).json({ error: err.message || String(err) });
+    res.status(500).json({ error: formatGeminiError(err) });
   }
 });
 
@@ -2531,8 +2574,8 @@ app.post("/api/ai/ask", async (req, res) => {
     }
 
     const geminiApiKey = process.env.GEMINI_API_KEY;
-    if (!geminiApiKey) {
-      return res.status(400).json({ error: "Gemini API key is not configured in environment secrets." });
+    if (!geminiApiKey || geminiApiKey.trim() === "" || geminiApiKey === "MY_GEMINI_API_KEY") {
+      return res.status(400).json({ error: "Gemini API Key is missing. If deployed on Vercel, please add `GEMINI_API_KEY` in Vercel Project Settings → Environment Variables." });
     }
 
     const ai = new GoogleGenAI({
@@ -2610,19 +2653,30 @@ ${JSON.stringify(simplifiedReminders, null, 2)}`;
       }));
     }
 
-    const activeChat = ai.chats.create({
-      model: "gemini-3.5-flash",
-      config: {
-        systemInstruction,
-      },
-      history: formattedHistory
-    });
+    let activeChat;
+    try {
+      activeChat = ai.chats.create({
+        model: "gemini-2.5-flash",
+        config: {
+          systemInstruction,
+        },
+        history: formattedHistory
+      });
+    } catch (chatErr) {
+      activeChat = ai.chats.create({
+        model: "gemini-1.5-flash",
+        config: {
+          systemInstruction,
+        },
+        history: formattedHistory
+      });
+    }
 
     const response = await activeChat.sendMessage({ message: question });
     res.json({ answer: response.text });
   } catch (err: any) {
     console.error("[AI Chatbot Error]:", err);
-    res.status(500).json({ error: err.message || String(err) });
+    res.status(500).json({ error: formatGeminiError(err) });
   }
 });
 
@@ -2635,8 +2689,8 @@ app.post("/api/ai/transcribe-voice", async (req, res) => {
     }
 
     const geminiApiKey = process.env.GEMINI_API_KEY;
-    if (!geminiApiKey) {
-      return res.status(400).json({ error: "Gemini API key is not configured in environment secrets." });
+    if (!geminiApiKey || geminiApiKey.trim() === "" || geminiApiKey === "MY_GEMINI_API_KEY") {
+      return res.status(400).json({ error: "Gemini API Key is missing. If deployed on Vercel, please add `GEMINI_API_KEY` in Vercel Project Settings → Environment Variables." });
     }
 
     const ai = new GoogleGenAI({
@@ -2657,21 +2711,34 @@ app.post("/api/ai/transcribe-voice", async (req, res) => {
 
     const prompt = "Please transcribe this spoken voice note recording accurately. Provide only the plain text transcription. Do not include any introductory text, prefixing labels, or explanations. If the audio is silent or unintelligible, just return an empty string.";
 
-    const response = await ai.models.generateContent({
-      model: "gemini-3.5-flash",
-      contents: {
-        parts: [
-          filePart,
-          { text: prompt }
-        ]
-      }
-    });
+    let response;
+    try {
+      response = await ai.models.generateContent({
+        model: "gemini-2.5-flash",
+        contents: {
+          parts: [
+            filePart,
+            { text: prompt }
+          ]
+        }
+      });
+    } catch (genErr) {
+      response = await ai.models.generateContent({
+        model: "gemini-1.5-flash",
+        contents: {
+          parts: [
+            filePart,
+            { text: prompt }
+          ]
+        }
+      });
+    }
 
     const text = response.text || "";
     res.json({ text: text.trim() });
   } catch (err: any) {
     console.error("[AI Voice Transcription Error]:", err);
-    res.status(500).json({ error: err.message || String(err) });
+    res.status(500).json({ error: formatGeminiError(err) });
   }
 });
 
@@ -2684,8 +2751,8 @@ app.post("/api/ai/parse-command", async (req, res) => {
     }
 
     const geminiApiKey = process.env.GEMINI_API_KEY;
-    if (!geminiApiKey) {
-      return res.status(400).json({ error: "Gemini API key is not configured in environment secrets." });
+    if (!geminiApiKey || geminiApiKey.trim() === "" || geminiApiKey === "MY_GEMINI_API_KEY") {
+      return res.status(400).json({ error: "Gemini API Key is missing. If deployed on Vercel, please add `GEMINI_API_KEY` in Vercel Project Settings → Environment Variables." });
     }
 
     const ai = new GoogleGenAI({
@@ -2769,14 +2836,26 @@ If required fields for a command are missing, specify them in the missingFields 
       required: ["commandType"]
     };
 
-    const response = await ai.models.generateContent({
-      model: "gemini-3.5-flash",
-      contents: prompt,
-      config: {
-        responseMimeType: "application/json",
-        responseSchema
-      }
-    });
+    let response;
+    try {
+      response = await ai.models.generateContent({
+        model: "gemini-2.5-flash",
+        contents: prompt,
+        config: {
+          responseMimeType: "application/json",
+          responseSchema
+        }
+      });
+    } catch (genErr) {
+      response = await ai.models.generateContent({
+        model: "gemini-1.5-flash",
+        contents: prompt,
+        config: {
+          responseMimeType: "application/json",
+          responseSchema
+        }
+      });
+    }
 
     let rawText = response.text || "{}";
     rawText = rawText.trim();
@@ -2787,7 +2866,7 @@ If required fields for a command are missing, specify them in the missingFields 
     res.json(parsedResult);
   } catch (err: any) {
     console.error("[AI Parse Command Error]:", err);
-    res.status(500).json({ error: err.message || String(err) });
+    res.status(500).json({ error: formatGeminiError(err) });
   }
 });
 
@@ -3165,9 +3244,15 @@ async function startServer() {
     });
   }
 
-  app.listen(PORT, "0.0.0.0", () => {
-    console.log(`Server running on http://localhost:${PORT}`);
-  });
+  if (!process.env.VERCEL) {
+    app.listen(PORT, "0.0.0.0", () => {
+      console.log(`Server running on http://localhost:${PORT}`);
+    });
+  }
 }
 
-startServer();
+if (!process.env.VERCEL) {
+  startServer();
+}
+
+export default app;

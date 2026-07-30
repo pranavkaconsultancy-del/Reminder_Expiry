@@ -110,8 +110,29 @@ export default function ReminderForm({
       });
 
       if (!response.ok) {
-        const errData = await response.json();
-        throw new Error(errData.error || "Failed to analyze document");
+        const errData = await response.json().catch(() => ({}));
+        let rawErr = errData.error || "Failed to analyze document";
+        if (typeof rawErr === "object") {
+          rawErr = JSON.stringify(rawErr);
+        }
+        let cleanMsg = rawErr;
+        try {
+          if (rawErr.trim().startsWith("{")) {
+            const parsed = JSON.parse(rawErr);
+            if (parsed?.error?.message) {
+              cleanMsg = parsed.error.message;
+            }
+          }
+        } catch (e) {}
+
+        if (
+          cleanMsg.includes("API key not valid") || 
+          cleanMsg.includes("API_KEY_INVALID") || 
+          cleanMsg.includes("INVALID_ARGUMENT")
+        ) {
+          cleanMsg = "Gemini API Key issue on Vercel deployment: The GEMINI_API_KEY is invalid or missing. Please add a valid GEMINI_API_KEY in your Vercel Project Settings → Environment Variables.";
+        }
+        throw new Error(cleanMsg);
       }
 
       const result = await response.json();
